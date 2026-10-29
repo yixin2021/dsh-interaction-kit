@@ -77,7 +77,7 @@ main checkout.
 ## Install
 
 ```bash
-dsh plugin --profile web add github:ligudian/dsh-interaction-kit
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit
 ```
 
 Reload the page. Removing it:

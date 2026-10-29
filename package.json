@@ -20,11 +20,11 @@
   "author": "ligudian",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ligudian/dsh-interaction-kit.git"
+    "url": "git+https://github.com/yixin2021/dsh-interaction-kit.git"
   },
-  "homepage": "https://github.com/ligudian/dsh-interaction-kit#readme",
+  "homepage": "https://github.com/yixin2021/dsh-interaction-kit#readme",
   "bugs": {
-    "url": "https://github.com/ligudian/dsh-interaction-kit/issues"
+    "url": "https://github.com/yixin2021/dsh-interaction-kit/issues"
   },
   "type": "module",
   "exports": {
@@ -45,11 +45,15 @@
     "test": "node verify-client.mjs && node verify-layout.mjs"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-locale"]
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   }
 }

@@ -63,7 +63,7 @@ DSH Web 交互增强套件：一个插件，三处改进，全部用原生 UI �
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:ligudian/dsh-interaction-kit
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit
 ```
 
 刷新页面即可。卸载：
