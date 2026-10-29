@@ -273,6 +273,18 @@ check(worktreeLabel === 'worktree(feature/topic-b)', `the label names the worktr
 check(!/[（(]\s/.test(worktreeLabel), `the parenthesis is tight and ASCII (${JSON.stringify(worktreeLabel)})`)
 check(!/\d/.test(worktreeLabel), `the label counts nothing (${JSON.stringify(worktreeLabel)})`)
 
+// The two halves of the row must read as one control. The shipped `Pill` types
+// its content at 12px/18px, so naming the branch without restating the type
+// would leave it a size smaller than the option beside it.
+const dockCss = String(byType(dockTree, 'style')[0]?.props?.children ?? '')
+const sharedType = dockCss.match(/\.dsh-ik-worktree span,\.dsh-ik-dock-label\{([^}]*)\}/)
+check(sharedType !== null, 'the dock types both halves with one rule')
+const typed = sharedType?.[1] ?? ''
+check(/font-size:13px/.test(typed), `the branch name is 13px like the worktree label (${typed || 'no rule'})`)
+check(/font-weight:500/.test(typed), `the branch name is 500 like the worktree label (${typed || 'no rule'})`)
+check(/line-height:20px/.test(typed), `both share one line box, so they sit on one baseline (${typed || 'no rule'})`)
+check(/color:var\(--dsw-alias-label-secondary\)/.test(typed), `both use the secondary label colour (${typed || 'no rule'})`)
+
 // A checkout created without a branch still has a directory worth naming.
 const withBranchless = { ...answers.status, worktree: { path: '/work/repo/.worktrees/hotfix', branch: '' } }
 answers.status = withBranchless

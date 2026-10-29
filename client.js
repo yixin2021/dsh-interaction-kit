@@ -137,7 +137,9 @@ window.__ModuleLoader__.load({
      */
     const CSS = `
 .dsh-ik-dock{display:inline-flex;align-items:center;gap:8px;min-width:0}
-.dsh-ik-worktree span{font-size:13px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-secondary)}
+/* One type scale for both halves of the row: the checkout's name and the
+   option that acts on it read as the same control, not as a chip and a caption. */
+.dsh-ik-worktree span,.dsh-ik-dock-label{font-size:13px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-secondary)}
 .dsh-ik-dock-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px}
 .dsh-ik-menu.dsh-ik-menu{width:max-content;min-width:min(240px,100vw - 32px);max-width:min(360px,100vw - 32px);max-height:min(360px,100vh - 96px);overflow:hidden;display:flex;flex-direction:column}
 .dsh-ik-search-row{position:sticky;top:0;z-index:1;flex:none;display:flex;margin:2px 0 3px;background:var(--dsw-alias-menu-group-header-fill)}
