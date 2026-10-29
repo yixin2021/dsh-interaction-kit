@@ -91,6 +91,13 @@ async function run(withPrimitives) {
         if (typeof cleanup === 'function') cleanup()
       }
     },
+    // `remote` is another plugin's service, and this composition leaves it out:
+    // the dock must still mount, only without its event-driven refresh.
+    inject(deps, callback) {
+      if (deps.some((name) => this[name] === undefined)) return { dispose() {} }
+      callback(this)
+      return { dispose() {} }
+    },
     slots: {
       inject(slotName, factory) {
         const result = factory()
@@ -136,6 +143,11 @@ async function run(withPrimitives) {
   console.log(`\n=== ${label}`)
   console.log('module id     ', plugin.id)
   console.log('module inject ', JSON.stringify(plugin.face.inject))
+
+  // `remote` is another plugin's service: `apply` must survive a composition
+  // that does not provide it, because the dock is the point of this plugin and
+  // the event-driven refresh is only an optimisation on top of it.
+  console.log('no remote dep ', ctx.remote === undefined ? 'tolerated (this stub omits it)' : 'present in stub')
 
   plugin.face.apply(ctx)
 

@@ -2,7 +2,9 @@
  * Structural and behavioural assertions for the three surfaces the reference
  * design pins down:
  *   1. the dock row holds the branch pill and, beside it as a peer control, the
- *      worktree checkbox — and the branch menu contains no worktree control,
+ *      worktree option — a checkbox before the conversation starts, the
+ *      checkout's name afterwards, and nothing at all when the Session never
+ *      opted in; the branch menu contains no worktree control,
  *   2. the branch menu is the shipped `Menu` with a search field, a section
  *      header, checkmarked rows and the create footer,
  *   3. a right-click anywhere on a Session row opens that row's "..." menu.
@@ -66,6 +68,7 @@ const answers = {
     linkedWorktree: false,
     worktreeMode: true,
     worktreeLocked: false,
+    started: false,
     worktree: {
       path: '/work/repo/.worktrees/topic-b',
       branch: 'feature/topic-b',
@@ -85,7 +88,25 @@ globalThis.fetch = async (url, init) => {
   return { ok: true, status: 200, json: async () => answer }
 }
 
+/** Host-forwarded Session events the plugin subscribed to, by event name. */
+const remoteHandlers = new Map()
+
 const ctx = {
+  // `remote` is another plugin's service: the client half asks for it with
+  // `ctx.inject`, which in Cordis starts the callback once the service exists.
+  // The stub delivers it immediately and records the subscriptions so the
+  // harness can raise the same events a real Host forwards.
+  remote: {
+    $on(event, handler) {
+      remoteHandlers.set(event, handler)
+      return () => remoteHandlers.delete(event)
+    },
+  },
+  inject(deps, callback) {
+    if (deps.some((name) => this[name] === undefined)) return { dispose() {} }
+    callback(this)
+    return { dispose() {} }
+  },
   locale: {
     register(ns, dicts) {
       dictionary.ns = ns
@@ -307,24 +328,81 @@ const pillLabel = byClass(dockTree, 'dsh-ik-dock-label')[0]
 check(pillLabel?.children?.[0] === 'feature/topic-a', `pill shows the branch (${JSON.stringify(pillLabel?.children?.[0])})`)
 check(byType(dockTree, 'IconBranchOutlineRegular').length === 1, 'pill carries the shipped branch glyph')
 
-// A Session that has already exchanged a message keeps its worktree: undoing it
+// Once the conversation has exchanged a message the option is spent: undoing it
 // would leave the earlier writes in the checkout and send later ones elsewhere.
-// The Host reports the rule, and the chip both disables itself and says why.
-answers.status = { ...baseStatus, worktreeLocked: true }
+// The dock therefore stops asking and reports instead — the checkout's name and
+// path, with no checkbox left to press.
+answers.status = { ...baseStatus, started: true, worktreeLocked: true }
 dock.Component({ t, sessionId: 'session-probe' })
 await flush()
-const lockedTree = dock.Component({ t, sessionId: 'session-probe' })
-const lockedBox = byType(lockedTree, 'Checkbox')[0]
-check(lockedBox?.props?.checked === true, 'a locked worktree still reads as on')
-check(lockedBox?.props?.disabled === true, 'the started Session cannot clear the checkbox')
-check(String(lockedBox?.props?.title ?? '').includes('stays'), `the tooltip states the lock (${JSON.stringify(lockedBox?.props?.title)})`)
+const startedTree = dock.Component({ t, sessionId: 'session-probe' })
+check(byType(startedTree, 'Checkbox').length === 0, 'a started Session offers no worktree checkbox')
+const startedRow = byClass(startedTree, 'dsh-ik-dock')[0]
+const startedControls = childElements(startedRow ?? { children: [] }).filter((node) => node.type !== 'style')
+check(startedControls.length === 2, `the started dock still holds 2 controls (found ${startedControls.length})`)
+const startedName = byClass(startedTree, 'dsh-ik-worktree-static')[0]
+check(startedName?.type === 'span', 'the worktree name is a read-only label, not a control')
+check(text(startedName) === 'worktree(feature/topic-b)', `the label names the worktree (${JSON.stringify(text(startedName))})`)
+check(String(startedName?.props?.title ?? '').includes('/work/repo/.worktrees/topic-b'), `the tooltip states where writes land (${JSON.stringify(startedName?.props?.title)})`)
+
+// Enabled but not created yet (the first write has not run): still named, with
+// the "next write creates it" explanation, and still no checkbox.
+answers.status = { ...baseStatus, started: true, worktreeMode: true, worktree: null, worktreeLocked: false }
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+const pendingTree = dock.Component({ t, sessionId: 'session-probe' })
+check(byType(pendingTree, 'Checkbox').length === 0, 'a started Session with no checkout yet still shows no checkbox')
+const pendingName = byClass(pendingTree, 'dsh-ik-worktree-static')[0]
+check(text(pendingName) === 'worktree', `a pending worktree keeps the plain word (${JSON.stringify(text(pendingName))})`)
+
+// Started without opting in: no worktree control at all. The branch pill already
+// says which checkout the Session writes to.
+answers.status = { ...baseStatus, started: true, worktreeMode: false, worktree: null, worktreeLocked: false }
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+const plainTree = dock.Component({ t, sessionId: 'session-probe' })
+check(byType(plainTree, 'Checkbox').length === 0, 'a started Session without a worktree keeps no checkbox')
+check(byClass(plainTree, 'dsh-ik-worktree').length === 0, 'a started Session without a worktree keeps no worktree label')
+const plainRow = byClass(plainTree, 'dsh-ik-dock')[0]
+const plainControls = childElements(plainRow ?? { children: [] }).filter((node) => node.type !== 'style')
+check(plainControls.length === 1, `only the branch pill remains (found ${plainControls.length})`)
+
+// A Session that has not started is still free to choose.
 answers.status = baseStatus
 dock.Component({ t, sessionId: 'session-probe' })
 await flush()
 const unlockedBox = byType(dock.Component({ t, sessionId: 'session-probe' }), 'Checkbox')[0]
-check(unlockedBox?.props?.disabled === false, 'a fresh Session can still clear the checkbox')
+check(unlockedBox?.props?.disabled === false, 'a fresh Session can still set the checkbox')
+
+// A recorded checkout whose option was switched off again (possible only before
+// the first message) must not be named: the mode, not the leftover record, is
+// what decides where the next write lands.
+answers.status = { ...baseStatus, started: true, worktreeMode: false, worktree: baseStatus.worktree, worktreeLocked: false }
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+const staleTree = dock.Component({ t, sessionId: 'session-probe' })
+check(byClass(staleTree, 'dsh-ik-worktree').length === 0, 'a stale worktree record is not named once the option is off')
+
+// The dock is mounted for the whole turn — the InputBar only changes variant —
+// so no remount would refresh it. The Host's forwarded Session events have to do
+// that, or the checkbox would outlive the conversation's first message.
+check(remoteHandlers.has('api-session/activity'), 'the plugin listens for Session activity')
+check(remoteHandlers.has('api-session/status'), 'the plugin listens for Session status changes')
+answers.status = baseStatus
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+check(byType(dock.Component({ t, sessionId: 'session-probe' }), 'Checkbox').length === 1, 'the checkbox is still there before the conversation starts')
+answers.status = { ...baseStatus, started: true }
+remoteHandlers.get('api-session/activity')?.('session-probe')
+await new Promise((resolve) => setTimeout(resolve, 200))
+const afterEventTree = dock.Component({ t, sessionId: 'session-probe' })
+check(byType(afterEventTree, 'Checkbox').length === 0, 'a Session event replaces the checkbox with the worktree name')
+check(text(byClass(afterEventTree, 'dsh-ik-worktree-static')[0]) === 'worktree(feature/topic-b)', 'the replacement names the worktree')
 
 // ------------------------------------------------------------- branch menu --
+answers.status = baseStatus
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
 const pill = byType(dockTree, 'Pill')[0]
 pill.props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 120, right: 260, top: 700, bottom: 726, width: 140, height: 26 }) } })
 await flush()

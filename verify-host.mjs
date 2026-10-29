@@ -129,6 +129,17 @@ function show(label, answer) {
 }
 
 show('status', await call('status'))
+
+// The dock turns from a checkbox into a read-only name on this flag, so the Host
+// must report it before the Session has any message at all.
+const freshStatus = await call('status')
+console.log('\n### started flag')
+console.log('fresh Session started:', freshStatus.body.started)
+if (freshStatus.body.started !== false) {
+  console.error('FAIL a Session with no messages reported started')
+  process.exitCode = 1
+}
+
 show('bad request', await call('nonsense'))
 show('unknown action', await call('do-the-thing'))
 show('invalid branch name', await call('switch', { branch: '--upload-pack=evil' }))
@@ -188,6 +199,13 @@ show('worktree-mode off (blank Session)', await call('set-worktree-mode', { enab
 // the earlier writes in the checkout and send later ones to the main checkout.
 show('worktree-mode on again', await call('set-worktree-mode', { enabled: true }))
 session.started = true
+const startedStatus = await call('status')
+console.log('\n### started status after a message')
+console.log('started:', startedStatus.body.started, '| mode:', startedStatus.body.worktreeMode, '| locked:', startedStatus.body.worktreeLocked)
+if (startedStatus.body.started !== true) {
+  console.error('FAIL a Session with a message did not report started')
+  process.exitCode = 1
+}
 const lockedOff = await call('set-worktree-mode', { enabled: false })
 console.log('\n### worktree-mode off refused')
 console.log('ok:', lockedOff.body.ok, '| code:', lockedOff.body.code)

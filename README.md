@@ -9,8 +9,10 @@ the shipped UI primitives so nothing looks bolted on.
   permanent delete, …), instead of having to hunt for the three dots.
 - **Branch chip under the composer** — the workspace's current Git branch, click to switch. The menu
   is the native searchable menu: pinned search field, sticky section heading, branch list.
-- **Worktree checkbox** — opt in per Session. On the first file write, a worktree is created and the
-  Session moves into it, so parallel work stops colliding in one checkout.
+- **Worktree option** — opt in per Session before the first message. On the first file write, a
+  worktree is created and the Session moves into it, so parallel work stops colliding in one
+  checkout. Once the conversation has started the option becomes the worktree's name, and disappears
+  when the Session never opted in.
 
 ## Features
 
@@ -65,8 +67,9 @@ open with the error rather than closing on a half-applied change.
 
 ### Worktree mode
 
-A checkbox on the same row as the branch chip, deliberately **not** inside the branch menu. When it
-is on and the Session has no worktree yet, the first write tool call creates one:
+A control on the same row as the branch chip, deliberately **not** inside the branch menu. Before the
+Session has exchanged a message it is a checkbox: turning it on and writing the first file creates a
+worktree:
 
 ```
 <repository>/.worktrees/<branch>      branch: <session>-<slug>
@@ -78,15 +81,15 @@ checkbox off returns the Session to the repository root.
 Creation prefers the host's own `worktrees` service, so it honours whatever sandbox and policy the
 profile applies; it falls back to `git worktree add` only when no live Agent exists to create one.
 
-The label names the checkout this Session is in — `worktree(feature/topic-b)` — rather than counting
-worktrees. A count says nothing about where the next write lands; the branch is the name an operator
-recognises, and a checkout created without one falls back to its directory name.
-
-Once the conversation has started, the option is **locked on**. Turning it off then would not undo
-anything: the writes that already ran in the worktree would stay there while later ones reopened the
-main checkout, splitting one Session across two directories. The Host refuses that transition with
-`worktree-locked` and reports `worktreeLocked` in `status`; the checkbox disables itself and its
-tooltip says why. A Session that has not exchanged a message is still free to change its mind.
+Once the conversation has started the choice is spent, so the checkbox goes away and the row reports
+instead: with the worktree on it shows `worktree(feature/topic-b)` — the label names the checkout this
+Session writes to, not how many exist, and a checkout created without a branch falls back to its
+directory name — and with it off it shows nothing at all, because the branch pill already says which
+checkout that is. One rule, two reasons: turning the option off after the first message would not undo
+anything (the writes that already ran in the worktree would stay there while later ones reopened the
+main checkout), and a permanently disabled checkbox would only advertise a state nobody can change.
+The Host refuses that transition with `worktree-locked` and reports `started` and `worktreeLocked` in
+`status`.
 
 ## Install
 
@@ -181,7 +184,7 @@ Writes are queued and atomic, so two Sessions toggling at once cannot corrupt it
 
 | Slot | Purpose |
 | --- | --- |
-| `conversation.input.left` | Branch chip + worktree checkbox, beside the mode selector |
+| `conversation.input.left` | Branch chip + worktree option, beside the mode selector |
 | `shell.overlay` | Branch menu, create-branch dialog, delete confirmation |
 | `sidebar.workspaces.session.menu.item` | Permanent delete row |
 | `sidebar.workspaces.session.row.action` | Right-click → menu |

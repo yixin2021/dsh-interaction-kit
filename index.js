@@ -307,9 +307,13 @@ async function readStatus(ctx, sessionId) {
     linkedWorktree,
     worktreeMode: state.worktreeMode[sessionId] === true,
     worktree,
-    // Reported so the chip can disable itself. `worktree` alone is not enough:
-    // the Session has started as soon as it has a message, which is earlier than
-    // the first write that creates the checkout.
+    // Whether the Session has exchanged a message. The chip turns from an
+    // opt-in checkbox into a read-only name once it has: the choice is spent,
+    // and a disabled control would only advertise a state nobody can change.
+    started,
+    // Reported so a caller never has to re-derive the rule. `worktree` alone is
+    // not enough: the Session has started as soon as it has a message, which is
+    // earlier than the first write that creates the checkout.
     worktreeLocked: state.worktreeMode[sessionId] === true && (worktree !== null || started),
   }
 }

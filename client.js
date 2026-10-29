@@ -4,7 +4,9 @@
  * Four surfaces over one shared store, all built from the shipped UI
  * primitives so the plugin looks and behaves like the first-party chrome:
  *   - a dock row under the composer card holding the branch pill and, beside
- *     it as a peer control, the worktree checkbox (`conversation.composer.dock`),
+ *     it as a peer control, the worktree option (`conversation.input.left`),
+ *     which is a checkbox until the conversation starts and then becomes the
+ *     name of the checkout the Session writes to,
  *   - a native `Menu` above that pill listing branches
  *     (`shell.overlay`),
  *   - a permanent-delete row in each Session's "..." menu
@@ -54,7 +56,7 @@ window.__ModuleLoader__.load({
       'dock.worktreeOff': 'Worktree off: code is written in the main checkout.',
       'dock.worktreeOn': 'Worktree on: the next file write creates a worktree first.',
       'dock.worktreeOnNamed': 'Worktree on: writes go to {branch}.',
-      'dock.worktreeLocked': 'The conversation has started: this worktree stays for the rest of the Session.',
+      'dock.worktreeAt': 'Writes go to {path}.',
       'menu.search': 'Search {repo} branches',
       'menu.section': 'Branches',
       'menu.count': '{matched} / {total}',
@@ -95,7 +97,7 @@ window.__ModuleLoader__.load({
       'dock.worktreeOff': '未启用 worktree：代码写在主检出中。',
       'dock.worktreeOn': '已启用 worktree：下次写入代码前会自动切出工作树。',
       'dock.worktreeOnNamed': '已启用 worktree：代码写入 {branch}。',
-      'dock.worktreeLocked': '会话已开始：本会话将保持使用该 worktree，无法取消。',
+      'dock.worktreeAt': '代码写入 {path}。',
       'menu.search': '搜索{repo}分支',
       'menu.section': '分支',
       'menu.count': '{matched} / {total}',
@@ -141,6 +143,10 @@ window.__ModuleLoader__.load({
    option that acts on it read as the same control, not as a chip and a caption. */
 .dsh-ik-worktree span,.dsh-ik-dock-label{font-size:13px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-secondary)}
 .dsh-ik-dock-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px}
+/* Once the conversation starts the name is a label, not a control: it keeps the
+   row's type scale and truncates like the branch beside it. */
+.dsh-ik-worktree-static{display:inline-flex;align-items:center;min-width:0;cursor:default}
+.dsh-ik-worktree-static span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px}
 .dsh-ik-menu.dsh-ik-menu{width:max-content;min-width:min(240px,100vw - 32px);max-width:min(360px,100vw - 32px);max-height:min(360px,100vh - 96px);overflow:hidden;display:flex;flex-direction:column}
 .dsh-ik-search-row{position:sticky;top:0;z-index:1;flex:none;display:flex;margin:2px 0 3px;background:var(--dsw-alias-menu-group-header-fill)}
 .dsh-ik-search-row .dsh-ik-search{flex:1 1 auto;width:100%;min-width:0;box-sizing:border-box;border:0;outline:none;background:transparent;height:auto;padding:5px 7px;border-radius:var(--dsw-radius-md)}
@@ -329,6 +335,14 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * Re-read one Session, but only while a mounted dock tracks it.
+       * @param sessionId - Session the Host just reported activity for.
+       */
+      const refreshWatched = (sessionId) => {
+        if (typeof sessionId === 'string' && watched.has(sessionId)) void refresh(sessionId, { quiet: true })
+      }
+
+      /**
        * Track one Session while its dock entry is mounted.
        * @param sessionId - Session to track.
        * @returns the unregister function.
@@ -367,6 +381,7 @@ window.__ModuleLoader__.load({
         set,
         refresh,
         refreshAll,
+        refreshWatched,
         watch,
         /**
          * Open the branch menu above one Session's pill.
@@ -581,9 +596,12 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * The dock row: the branch pill with the worktree checkbox beside it.
-       * Both come from the primitives, so they carry the first-party styling;
-       * the checkbox is a peer of the pill, never a section of the menu.
+       * The dock row: the branch pill with the worktree option beside it.
+       *
+       * The option is a checkbox only while the Session is still undecided —
+       * before its first message. Once the conversation has started the row
+       * reports instead of asking: the worktree's name when one is in use, and
+       * no worktree control at all when the Session never opted in.
        */
       function BranchDock(props) {
         const t = props.t
@@ -602,15 +620,13 @@ window.__ModuleLoader__.load({
         const branch = typeof status.branch === 'string' && status.branch.length > 0 ? status.branch : t('dock.detached')
         const on = status.worktreeMode === true
         const worktree = isRecord(status.worktree) ? status.worktree : null
-        // Once the conversation has moved on, turning the option off cannot undo
-        // anything that already ran in the worktree — it would only send later
-        // writes back to the main checkout, splitting one Session across two.
-        // The Host owns that rule and reports it; the chip only reflects it.
-        const locked = status.worktreeLocked === true
-        let checkTitle = t('dock.worktreeOn')
-        if (on === false) checkTitle = t('dock.worktreeOff')
-        else if (worktree !== null && typeof worktree['branch'] === 'string') checkTitle = fill(t('dock.worktreeOnNamed'), { branch: worktree['branch'] })
-        if (locked === true) checkTitle = t('dock.worktreeLocked')
+        // Starting the conversation ends the choice. Turning the option off then
+        // cannot undo anything that already ran in the worktree — it would only
+        // send later writes back to the main checkout, splitting one Session
+        // across two. The dock therefore stops offering the option: an enabled
+        // worktree is shown by name, a disabled one by nothing at all.
+        // `worktreeLocked` remains a fallback for a Host that predates `started`.
+        const started = status.started === true || status.worktreeLocked === true
 
         // The label names this Session's own checkout, not how many exist: a count
         // says nothing about which worktree the next write lands in. The branch is
@@ -618,7 +634,17 @@ window.__ModuleLoader__.load({
         // for a checkout created without one.
         const worktreeName = worktreeLabel(worktree)
         const label = worktreeName.length > 0 ? `${t('dock.worktree')}(${worktreeName})` : t('dock.worktree')
+        const worktreePath = worktree !== null && typeof worktree['path'] === 'string' ? worktree['path'] : ''
 
+        let checkTitle = t('dock.worktreeOn')
+        if (started === true) {
+          // Read-only: name the checkout rather than explain a control that is gone.
+          checkTitle = worktreePath.length > 0 ? fill(t('dock.worktreeAt'), { path: worktreePath }) : t('dock.worktreeOn')
+        } else if (on === false) {
+          checkTitle = t('dock.worktreeOff')
+        } else if (worktreeName.length > 0) {
+          checkTitle = fill(t('dock.worktreeOnNamed'), { branch: worktreeName })
+        }
 
         // The Menu closes itself on any outside pointerdown, so a second press
         // on the pill has to toggle. The rect comes from the event rather than
@@ -642,6 +668,41 @@ window.__ModuleLoader__.load({
         )
         const expanded = snapshot.menuOpen && snapshot.menuSessionId === sessionId
 
+        /**
+         * The row's second half.
+         *
+         * Before the conversation starts this is the opt-in checkbox: the
+         * Session has no work yet to strand, so the choice is still real. After
+         * it starts the choice is spent, and a disabled checkbox would only
+         * advertise a state nobody can change. The row then reports where writes
+         * actually land — the worktree's name while the option is on — and
+         * offers nothing at all when it is off, because the branch pill already
+         * says which checkout the Session writes to.
+         */
+        const showWorktree = started === true && on === true
+        let control = null
+        if (showWorktree === true) {
+          control = h('span', { className: 'dsh-ik-worktree dsh-ik-worktree-static', title: checkTitle }, h('span', null, label))
+        } else if (started === false) {
+          control = canRender(p.Checkbox)
+            ? h(p.Checkbox, {
+                checked: on,
+                disabled: snapshot.busy,
+                className: 'dsh-ik-worktree',
+                label,
+                title: checkTitle,
+                onChange: (next) => {
+                  void store.setWorktreeMode(sessionId, next, { failed: t('menu.worktreeFailed'), locked: t('menu.worktreeLocked') })
+                },
+              })
+            : h(
+                'label',
+                { className: 'dsh-ik-worktree', title: checkTitle },
+                h('input', { type: 'checkbox', checked: on, disabled: snapshot.busy, onChange: () => store.setWorktreeMode(sessionId, !on, { failed: t('menu.worktreeFailed'), locked: t('menu.worktreeLocked') }) }),
+                h('span', null, label),
+              )
+        }
+
         return h(
           React.Fragment,
           null,
@@ -661,23 +722,7 @@ window.__ModuleLoader__.load({
                   pillContent,
                 )
               : h('button', { type: 'button', onClick: openMenu, title: t('dock.open'), 'aria-haspopup': 'menu' }, pillContent),
-            canRender(p.Checkbox)
-              ? h(p.Checkbox, {
-                  checked: on,
-                  disabled: snapshot.busy || locked,
-                  className: 'dsh-ik-worktree',
-                  label,
-                  title: checkTitle,
-                  onChange: (next) => {
-                    void store.setWorktreeMode(sessionId, next, { failed: t('menu.worktreeFailed'), locked: t('menu.worktreeLocked') })
-                  },
-                })
-              : h(
-                  'label',
-                  { className: 'dsh-ik-worktree' },
-                  h('input', { type: 'checkbox', checked: on, disabled: snapshot.busy || locked, onChange: () => store.setWorktreeMode(sessionId, !on, { failed: t('menu.worktreeFailed'), locked: t('menu.worktreeLocked') }) }),
-                  h('span', null, label),
-                ),
+            control,
           ),
         )
       }
@@ -1105,6 +1150,42 @@ window.__ModuleLoader__.load({
             document.removeEventListener('visibilitychange', onFocus)
           }
         }, 'interaction-kit: refresh on focus')
+
+        // The dock stops offering the worktree option the moment the
+        // conversation starts, and the Host is the only side that knows when
+        // that happened. Its forwarded Session events mark both halves — a user
+        // message and an agent run — and one turn can raise either or both, so
+        // the reads coalesce into one timer rather than one per event.
+        //
+        // `remote` is another plugin's service, not one this plugin requires:
+        // `ctx.inject` defers the subscription until it exists instead of
+        // failing the whole client half when the composition leaves it out.
+        ctx.inject(['remote'], (scoped) => {
+          scoped.effect(() => {
+            const remote = scoped.remote
+            const pending = new Set()
+            let timer = null
+            const schedule = (sessionId) => {
+              if (typeof sessionId !== 'string') return
+              pending.add(sessionId)
+              if (timer !== null) return
+              timer = setTimeout(() => {
+                timer = null
+                const ids = Array.from(pending)
+                pending.clear()
+                for (const id of ids) store.refreshWatched(id)
+              }, 120)
+            }
+            const offs = [
+              remote.$on('api-session/activity', schedule),
+              remote.$on('api-session/status', schedule),
+            ]
+            return () => {
+              for (const off of offs) if (typeof off === 'function') off()
+              if (timer !== null) clearTimeout(timer)
+            }
+          }, 'interaction-kit: refresh on Session events')
+        })
       },
     }
   },
