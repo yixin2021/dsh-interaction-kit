@@ -92,6 +92,50 @@ From a local checkout, install the directory instead:
 dsh plugin --profile web add /absolute/path/to/dsh-interaction-kit
 ```
 
+## Updating
+
+`package.json` in the profile records the spec, but the lockfile pins the **exact commit** the spec
+resolved to:
+
+```
+specifier: github:yixin2021/dsh-interaction-kit#main
+version:   https://codeload.github.com/yixin2021/dsh-interaction-kit/tar.gz/3eeee4519883...
+```
+
+So re-running `add` with an unchanged spec is a no-op: pnpm sees the lockfile already satisfies it
+and skips resolution. New commits on `main` are **not** picked up that way. To move to a new commit,
+drop the dependency and add it again, which forces a fresh resolution:
+
+```bash
+dsh plugin --profile web rm  dsh-interaction-kit
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#main
+```
+
+In the desktop app the same two steps are the plugin's **Remove** then reinstall from the source.
+
+Then **restart DSH**, because the Host half is imported once at profile start. Reloading the page
+alone leaves the old Host code running.
+
+Pinning a release instead of a branch is unambiguous and needs no re-resolution:
+
+```bash
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#v1.0.0
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#3eeee45
+```
+
+A tag or commit spec records a new lockfile entry, so changing it always fetches.
+
+### Two install modes, one tradeoff
+
+| Spec | Editing the source… | Use it when |
+| --- | --- | --- |
+| `/local/path` or `link:/local/path` | takes effect immediately (plus the reload rules below) | you are developing the plugin |
+| `github:owner/repo` | has no effect until you push and reinstall | you want the installed copy to be exactly what is published |
+
+A `link:` install is a symlink into your checkout, so the running plugin sees your working tree.
+A `github:` install is a real directory unpacked from the tarball — read-only in practice, and
+identical to what everyone else gets. Switching between them is just `rm` + `add`.
+
 ### What needs a reload and what needs a restart
 
 | Change | Takes effect |
@@ -137,8 +181,19 @@ node verify-host.mjs <sessionId>   # drives the Host route against a sandboxed $
 
 `verify-layout.mjs` renders the slot components against a stub React and asserts the resulting tree
 — which primitive was used, which classes, which locale strings, and the safety properties (no
-archive click, no viewport-wide listener). The two harnesses are development-only and are not
-shipped.
+archive click, no viewport-wide listener). The harnesses are development-only: `files` in
+`package.json` keeps them out of the published tarball, so a `github:` install never receives them.
+
+### Releasing
+
+```bash
+# 1. bump "version" in package.json, then
+git commit -am "chore: release v1.0.1"
+git tag -a v1.0.1 -m "v1.0.1"
+git push origin main --follow-tags
+```
+
+Consumers pin `#v1.0.1`; anyone on `#main` re-resolves on their next remove + add.
 
 ## License
 

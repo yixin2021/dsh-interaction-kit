@@ -78,6 +78,44 @@ dsh plugin --profile web rm dsh-interaction-kit
 dsh plugin --profile web add /绝对路径/dsh-interaction-kit
 ```
 
+## 更新
+
+profile 的 `package.json` 只记录「声明的 spec」，真正钉住的是 lockfile 里那个**确切 commit**：
+
+```
+specifier: github:yixin2021/dsh-interaction-kit#main
+version:   https://codeload.github.com/yixin2021/dsh-interaction-kit/tar.gz/3eeee4519883...
+```
+
+所以用同一个 spec 再 `add` 一次是空操作——pnpm 认为 lockfile 已满足，直接跳过解析，`main` 上的新提交
+**不会**被这样拿到。要换到新提交，必须先删掉依赖再重新添加，强制重新解析：
+
+```bash
+dsh plugin --profile web rm  dsh-interaction-kit
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#main
+```
+
+桌面端的等价操作：插件页里先 **移除**，再从来源重新安装。
+
+之后要**重启 DSH**：Host 半在 profile 启动时只 import 一次，光刷新页面跑的还是旧 Host 代码。
+
+钉一个发布版本则没有这个歧义，换 spec 就必然重新拉取：
+
+```bash
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#v1.0.0
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#3eeee45
+```
+
+### 两种安装方式，一个取舍
+
+| spec | 改源码的效果 | 什么时候用 |
+| --- | --- | --- |
+| `/本地路径` 或 `link:/本地路径` | 立即生效（再叠加下面那两条刷新规则） | 你在开发这个插件 |
+| `github:owner/repo` | 不生效，必须先 push 再重装 | 你想让装着的就是已发布的那份 |
+
+`link:` 是指向你工作区的软链，跑的就是你正在改的代码；`github:` 是从 tarball 解出来的真实目录，
+实际上等同于只读，并且和别人装到的完全一致。两者互转就是 `rm` + `add`。
+
 ### 哪些改动需要刷新、哪些需要重启
 
 | 改动 | 生效方式 |
@@ -121,7 +159,19 @@ node verify-host.mjs <sessionId>   # 在沙箱 $DSH_HOME 中驱动 Host 路由
 ```
 
 `verify-layout.mjs` 用桩 React 渲染各 Slot 组件并断言产出的树——用了哪个原生组件、哪些类名、
-哪些文案，以及关键安全性质（绝不误触归档、不在整页挂监听）。两个校验脚本仅用于开发，不随包发布。
+哪些文案，以及关键安全性质（绝不误触归档、不在整页挂监听）。校验脚本仅用于开发：`package.json` 的 `files`
+字段把它们排除在发布的 tarball 之外，所以用 `github:` 装的人不会收到它们。
+
+### 发布新版本
+
+```bash
+# 1. 先改 package.json 里的 "version"，然后
+git commit -am "chore: release v1.0.1"
+git tag -a v1.0.1 -m "v1.0.1"
+git push origin main --follow-tags
+```
+
+别人用 `#v1.0.1` 钉版本；跟在 `#main` 上的人下次「移除 + 重装」时更新。
 
 ## 许可证
 
