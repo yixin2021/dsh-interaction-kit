@@ -1,0 +1,55 @@
+{
+  "name": "dsh-interaction-kit",
+  "version": "1.0.0",
+  "description": "Interaction and convenience upgrades for the DSH Web UI: right-click a Session for its full menu (with permanent delete), a Git branch chip under the composer with switching, and an opt-in worktree mode that creates a worktree on the first write.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "plugin",
+    "git",
+    "worktree",
+    "branch",
+    "sidebar",
+    "context-menu",
+    "ux",
+    "interaction",
+    "web-ui"
+  ],
+  "license": "MIT",
+  "author": "ligudian",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ligudian/dsh-interaction-kit.git"
+  },
+  "homepage": "https://github.com/ligudian/dsh-interaction-kit#readme",
+  "bugs": {
+    "url": "https://github.com/ligudian/dsh-interaction-kit/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js",
+    "test": "node verify-client.mjs && node verify-layout.mjs"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-locale"]
+    }
+  }
+}
