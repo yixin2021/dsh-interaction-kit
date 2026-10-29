@@ -37,8 +37,13 @@ DSH Web 交互增强套件：一个插件，三处改进，全部用原生 UI �
 
 ### 分支胶囊与切换
 
-胶囊挂在 `conversation.composer.dock`，显示会话所在工作区的分支；处于游离 HEAD 时用警示色提示，
-另外显示未提交文件数。
+胶囊挂在 `conversation.input.left`——对话框的工具行，紧挨模式选择——显示会话所在工作区的分支；
+处于游离 HEAD 时用警示色提示，另外显示未提交文件数。
+
+这个位置是刻意选的。`conversation.composer.dock` 在输入框卡片下方，但原生 `InputBar` 只在
+`variant: "composer"` 时渲染它，而还没发过消息的会话走的是 `hero` 变体——也就是说，正好在「还在选
+目录」的阶段，那个座位是空的。`conversation.input.left` 两种变体都会挂载，所以分支和工作树选项在
+第一条消息之前就可用，而不是之后才冒出来。
 
 点击展开本地分支列表。仓库有上千个分支是常态，所以列表最多渲染 60 行，其余靠吸顶搜索框筛；
 筛选时分组标题会显示「命中/总数」。新建并检出分支是最后一行。
@@ -58,7 +63,12 @@ DSH Web 交互增强套件：一个插件，三处改进，全部用原生 UI �
 创建时优先调用宿主自己的 `worktrees` 服务，以遵守 profile 的沙箱与策略；只有在没有存活 Agent
 可调用时才回退到 `git worktree add`。
 
-`worktree(N)` 里的数字是 `git worktree list` 中主检出之外的工作树数量。
+标签显示的是这个会话所在检出的名字——`worktree(feature/topic-b)`——而不是工作树数量。数量说明不了
+下一次写入会落到哪里；分支才是人能认出来的名字，没有分支的检出则退回用目录名。
+
+会话一旦开始，这个选项就**锁定为开启**。此时取消并不能撤销任何事：已经跑在 worktree 里的写入会留在
+那里，而之后的写入会重开主检出，把一个会话劈成两个目录。Host 用 `worktree-locked` 拒绝这个转换，并在
+`status` 里回报 `worktreeLocked`；勾选框据此禁用，悬浮提示说明原因。还没交换过消息的会话仍可随意改。
 
 ## 安装
 
@@ -147,7 +157,7 @@ dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#e4aa663
 
 | Slot | 用途 |
 | --- | --- |
-| `conversation.composer.dock` | 分支胶囊 + 工作树勾选框 |
+| `conversation.input.left` | 分支胶囊 + 工作树勾选框，紧挨模式选择 |
 | `shell.overlay` | 分支菜单、新建分支对话框、删除确认 |
 | `sidebar.workspaces.session.menu.item` | 永久删除行 |
 | `sidebar.workspaces.session.row.action` | 右键 → 菜单 |

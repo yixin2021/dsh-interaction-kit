@@ -191,6 +191,33 @@ function resolveCwd(ctx, sessionId) {
 }
 
 /**
+ * Whether this Session has already exchanged a message.
+ *
+ * A Session that has started is no longer free to abandon its worktree: writes
+ * that already ran there would be stranded, and later ones would reopen the main
+ * checkout, splitting one conversation across two directories. The check reads
+ * derived messages rather than the raw log so a resumed Session answers from its
+ * own cache, and an unavailable Session answers `false` instead of throwing — a
+ * lock that cannot be justified must not be invented.
+ *
+ * @param ctx - Host context.
+ * @param sessionId - addressed Session.
+ * @returns true when a user or assistant message exists.
+ */
+function sessionStarted(ctx, sessionId) {
+  const sessions = ctx.get('sessions')
+  const session = typeof sessions?.get === 'function' ? sessions.get(sessionId) : undefined
+  if (session === undefined || typeof session.deriveMessages !== 'function') return false
+  try {
+    const messages = session.deriveMessages()
+    if (!Array.isArray(messages)) return false
+    return messages.some((message) => message?.role === 'user' || message?.role === 'assistant')
+  } catch {
+    return false
+  }
+}
+
+/**
  * Read everything the composer chip needs for one Session.
  * @param ctx - Host context.
  * @param sessionId - addressed Session.
@@ -251,6 +278,7 @@ async function readStatus(ctx, sessionId) {
         .filter((line) => line.length > 0).length
     : 0
   const linkedWorktree = gitDir.ok && commonDir.ok && gitDir.stdout.trim() !== commonDir.stdout.trim()
+  const started = sessionStarted(ctx, sessionId)
   const state = await loadState()
   let worktree = isRecord(state.worktrees[sessionId]) ? state.worktrees[sessionId] : null
   if (worktree !== null && typeof worktree['path'] === 'string') {
@@ -279,6 +307,10 @@ async function readStatus(ctx, sessionId) {
     linkedWorktree,
     worktreeMode: state.worktreeMode[sessionId] === true,
     worktree,
+    // Reported so the chip can disable itself. `worktree` alone is not enough:
+    // the Session has started as soon as it has a message, which is earlier than
+    // the first write that creates the checkout.
+    worktreeLocked: state.worktreeMode[sessionId] === true && (worktree !== null || started),
   }
 }
 
@@ -488,6 +520,17 @@ async function dispatch(ctx, body) {
   }
   if (action === 'set-worktree-mode') {
     const enabled = body['enabled'] === true
+    if (!enabled) {
+      // Turning it off after the conversation moved on would send later writes
+      // back to the main checkout while the earlier ones stayed in the worktree.
+      // A Session that never started is still free to change its mind.
+      const current = await readStatus(ctx, sessionId)
+      if (current.ok === true && current['worktreeLocked'] === true) {
+        // The refused state travels with the refusal so a caller never has to
+        // re-read it to learn what the Session actually looks like.
+        return { ...current, ok: false, code: 'worktree-locked', message: 'This Session has already started; its worktree stays.' }
+      }
+    }
     await withState((state) => {
       if (enabled) state.worktreeMode[sessionId] = true
       else delete state.worktreeMode[sessionId]

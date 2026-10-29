@@ -45,8 +45,15 @@ Confirmation is a destructive-action dialog, not a plain OK box.
 
 ### Branch chip and switching
 
-The dock sits in `conversation.composer.dock` and shows the branch of the Session's workspace,
-with a warning tone when the checkout is detached, plus an uncommitted-file count.
+The chip sits in `conversation.input.left` — the composer's tool row, immediately beside the mode
+selector — and shows the branch of the Session's workspace, with a warning tone when the checkout is
+detached, plus an uncommitted-file count.
+
+That seat is deliberate. `conversation.composer.dock` is below the card, but the shipped `InputBar`
+renders it only for `variant: "composer"`, and a Session with no messages yet is rendered as the
+`hero` variant — so that seat is empty for exactly as long as the repository is still being chosen.
+`conversation.input.left` is mounted in both variants, which is why the branch and the worktree
+option are available before the first message rather than after it.
 
 Clicking it opens a list of local branches. A repository with a thousand branches is normal, so
 the list renders at most 60 rows and the pinned search field narrows the rest; the heading states
@@ -71,8 +78,15 @@ checkbox off returns the Session to the repository root.
 Creation prefers the host's own `worktrees` service, so it honours whatever sandbox and policy the
 profile applies; it falls back to `git worktree add` only when no live Agent exists to create one.
 
-The count in `worktree(N)` is the number of linked worktrees `git worktree list` reports beyond the
-main checkout.
+The label names the checkout this Session is in — `worktree(feature/topic-b)` — rather than counting
+worktrees. A count says nothing about where the next write lands; the branch is the name an operator
+recognises, and a checkout created without one falls back to its directory name.
+
+Once the conversation has started, the option is **locked on**. Turning it off then would not undo
+anything: the writes that already ran in the worktree would stay there while later ones reopened the
+main checkout, splitting one Session across two directories. The Host refuses that transition with
+`worktree-locked` and reports `worktreeLocked` in `status`; the checkbox disables itself and its
+tooltip says why. A Session that has not exchanged a message is still free to change its mind.
 
 ## Install
 
@@ -149,7 +163,7 @@ identical to what everyone else gets. Switching between them is just `rm` + `add
 | Half | File | Responsibility |
 | --- | --- | --- |
 | Host | `index.js` | One authenticated route, `POST /api/interaction-kit`, plus a `tools/pre-execute` hook for auto-worktree. All `git` and filesystem work happens here. |
-| Client | `client.js` | Five slot registrations: composer dock, branch menu overlay, Session menu row, Session row right-click, delete dialog. |
+| Client | `client.js` | Five slot registrations: composer tool row, branch menu overlay, Session menu row, Session row right-click, delete dialog. |
 
 The page never runs `git` itself. The Client half only sends `{action, sessionId, …}` and renders
 the answer, so a repository path or a branch name from the page is validated on the Host
@@ -167,7 +181,7 @@ Writes are queued and atomic, so two Sessions toggling at once cannot corrupt it
 
 | Slot | Purpose |
 | --- | --- |
-| `conversation.composer.dock` | Branch chip + worktree checkbox |
+| `conversation.input.left` | Branch chip + worktree checkbox, beside the mode selector |
 | `shell.overlay` | Branch menu, create-branch dialog, delete confirmation |
 | `sidebar.workspaces.session.menu.item` | Permanent delete row |
 | `sidebar.workspaces.session.row.action` | Right-click → menu |

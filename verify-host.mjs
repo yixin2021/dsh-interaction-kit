@@ -28,12 +28,21 @@ const registered = { fetch: null, listeners: new Map(), cleanups: [] }
 const workspace = {
   id: 'ws-test',
   path: process.cwd(),
-  title: 'bi-service',
+  title: 'workspace',
   sessionIds: [sessionId],
   detachSession: async () => {},
 }
 
-const session = { id: sessionId, workspaceId: workspace.id }
+// `started` models a Session that has exchanged a message. The Host reads it
+// through `deriveMessages`, so the stub answers that shape rather than a flag.
+const session = {
+  id: sessionId,
+  workspaceId: workspace.id,
+  started: false,
+  deriveMessages() {
+    return this.started ? [{ role: 'user', content: 'hello' }] : []
+  },
+}
 
 const ctx = {
   effect(factory, label) {
@@ -173,7 +182,26 @@ if (created.body.created !== undefined) {
   console.log('worktree removed and branch deleted again')
 }
 
-show('worktree-mode off', await call('set-worktree-mode', { enabled: false }))
+show('worktree-mode off (blank Session)', await call('set-worktree-mode', { enabled: false }))
+
+// Once the conversation has started the option sticks: undoing it would leave
+// the earlier writes in the checkout and send later ones to the main checkout.
+show('worktree-mode on again', await call('set-worktree-mode', { enabled: true }))
+session.started = true
+const lockedOff = await call('set-worktree-mode', { enabled: false })
+console.log('\n### worktree-mode off refused')
+console.log('ok:', lockedOff.body.ok, '| code:', lockedOff.body.code)
+console.log('still on:', lockedOff.body.worktreeMode, '| locked:', lockedOff.body.worktreeLocked)
+if (lockedOff.body.ok !== false || lockedOff.body.code !== 'worktree-locked') {
+  console.error('FAIL the started Session cleared its worktree option')
+  process.exitCode = 1
+}
+if (lockedOff.body.worktreeMode !== true || lockedOff.body.worktreeLocked !== true) {
+  console.error('FAIL the refused status does not report the locked mode')
+  process.exitCode = 1
+}
+session.started = false
+show('worktree-mode off after starting again', await call('set-worktree-mode', { enabled: false }))
 
 show('delete-session (no such log)', await call('delete-session'))
 

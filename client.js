@@ -54,6 +54,7 @@ window.__ModuleLoader__.load({
       'dock.worktreeOff': 'Worktree off: code is written in the main checkout.',
       'dock.worktreeOn': 'Worktree on: the next file write creates a worktree first.',
       'dock.worktreeOnNamed': 'Worktree on: writes go to {branch}.',
+      'dock.worktreeLocked': 'The conversation has started: this worktree stays for the rest of the Session.',
       'menu.search': 'Search {repo} branches',
       'menu.section': 'Branches',
       'menu.count': '{matched} / {total}',
@@ -66,6 +67,7 @@ window.__ModuleLoader__.load({
       'menu.noWorkspace': 'This Session has no working directory.',
       'menu.switchFailed': 'Could not switch branches.',
       'menu.worktreeFailed': 'Could not change the worktree option.',
+      'menu.worktreeLocked': 'A Session that has already started keeps its worktree.',
       'create.title': 'Create a branch',
       'create.description': 'The new branch starts at the current commit and is checked out in this Session.',
       'create.label': 'New branch name',
@@ -93,6 +95,7 @@ window.__ModuleLoader__.load({
       'dock.worktreeOff': '未启用 worktree：代码写在主检出中。',
       'dock.worktreeOn': '已启用 worktree：下次写入代码前会自动切出工作树。',
       'dock.worktreeOnNamed': '已启用 worktree：代码写入 {branch}。',
+      'dock.worktreeLocked': '会话已开始：本会话将保持使用该 worktree，无法取消。',
       'menu.search': '搜索{repo}分支',
       'menu.section': '分支',
       'menu.count': '{matched} / {total}',
@@ -105,6 +108,7 @@ window.__ModuleLoader__.load({
       'menu.noWorkspace': '该会话没有工作目录。',
       'menu.switchFailed': '切换分支失败。',
       'menu.worktreeFailed': '无法更改 worktree 选项。',
+      'menu.worktreeLocked': '会话已开始，不能取消 worktree。',
       'create.title': '创建分支',
       'create.description': '新分支从当前提交开始，并在本会话中检出。',
       'create.label': '新分支名',
@@ -127,12 +131,13 @@ window.__ModuleLoader__.load({
     /**
      * Only what the primitives do not already style. Every value here mirrors a
      * shipped rule — the menu list's 4px padding and 13px/20px item text, the
-     * 11px tertiary label, the 14px check glyph — so the plugin's chrome is
-     * indistinguishable from the first-party menu it appears in.
+     * 11px tertiary label, the 14px check glyph, and the composer mode chip's
+     * 13px/500 secondary label — so the plugin's chrome is indistinguishable
+     * from the first-party controls it appears beside.
      */
     const CSS = `
 .dsh-ik-dock{display:inline-flex;align-items:center;gap:8px;min-width:0}
-.dsh-ik-dock>label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dsh-ik-worktree span{font-size:13px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-secondary)}
 .dsh-ik-dock-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px}
 .dsh-ik-menu.dsh-ik-menu{width:max-content;min-width:min(240px,100vw - 32px);max-width:min(360px,100vw - 32px);max-height:min(360px,100vh - 96px);overflow:hidden;display:flex;flex-direction:column}
 .dsh-ik-search-row{position:sticky;top:0;z-index:1;flex:none;display:flex;margin:2px 0 3px;background:var(--dsw-alias-menu-group-header-fill)}
@@ -153,6 +158,26 @@ window.__ModuleLoader__.load({
     /** @returns whether `value` is a plain JSON object. */
     function isRecord(value) {
       return typeof value === 'object' && value !== null && !Array.isArray(value)
+    }
+
+    /**
+     * The name a worktree is recognised by.
+     *
+     * The branch is what an operator names the work, and for the checkouts this
+     * plugin creates it is also the directory name. A checkout the host created
+     * without a branch (a detached one) still has a directory worth showing.
+     *
+     * @param worktree - the Session's recorded worktree, or null.
+     * @returns the label text, or an empty string when there is no worktree.
+     */
+    function worktreeLabel(worktree) {
+      if (!isRecord(worktree)) return ''
+      const branch = worktree['branch']
+      if (typeof branch === 'string' && branch.length > 0) return branch
+      const path = worktree['path']
+      if (typeof path !== 'string' || path.length === 0) return ''
+      const segments = path.split(/[\\/]/).filter((segment) => segment.length > 0)
+      return segments.length > 0 ? segments[segments.length - 1] : ''
     }
 
     /**
@@ -326,6 +351,10 @@ window.__ModuleLoader__.load({
         if (answer.ok === true) {
           if (Array.isArray(answer.branches)) putStatus(sessionId, answer)
           else await refresh(sessionId, { quiet: true })
+        } else if (isRecord(answer.status)) {
+          // The Host states the state it refused from; show that rather than
+          // leaving the control disagreeing with it.
+          putStatus(sessionId, answer.status)
         }
         return answer
       }
@@ -368,12 +397,16 @@ window.__ModuleLoader__.load({
          * @param enabled - the requested state.
          * @param fallbackMessage - shown when the Host sends no message.
          */
-        setWorktreeMode: async (sessionId, enabled, fallbackMessage) => {
+        setWorktreeMode: async (sessionId, enabled, messages) => {
           const status = state.statuses[sessionId] ?? null
           const hadWorktree = isRecord(status) && isRecord(status.worktree)
+          const said = typeof messages === 'string' ? { failed: messages } : (messages ?? {})
           set({ busy: true, error: '' })
           const answer = await callHost('set-worktree-mode', sessionId, { enabled })
-          await settle(sessionId, answer, fallbackMessage)
+          // The lock is a rule about this Session's history, so it gets its own
+          // sentence instead of the generic failure the Host also sends.
+          const refusal = answer.code === 'worktree-locked' && typeof said.locked === 'string' ? { ...answer, message: said.locked } : answer
+          await settle(sessionId, refusal, said.failed)
           if (answer.ok === true && !enabled && hadWorktree) {
             await callHost('restore-cwd', sessionId)
             await refresh(sessionId, { quiet: true })
@@ -567,16 +600,23 @@ window.__ModuleLoader__.load({
         const branch = typeof status.branch === 'string' && status.branch.length > 0 ? status.branch : t('dock.detached')
         const on = status.worktreeMode === true
         const worktree = isRecord(status.worktree) ? status.worktree : null
+        // Once the conversation has moved on, turning the option off cannot undo
+        // anything that already ran in the worktree — it would only send later
+        // writes back to the main checkout, splitting one Session across two.
+        // The Host owns that rule and reports it; the chip only reflects it.
+        const locked = status.worktreeLocked === true
         let checkTitle = t('dock.worktreeOn')
         if (on === false) checkTitle = t('dock.worktreeOff')
         else if (worktree !== null && typeof worktree['branch'] === 'string') checkTitle = fill(t('dock.worktreeOnNamed'), { branch: worktree['branch'] })
+        if (locked === true) checkTitle = t('dock.worktreeLocked')
 
-        // `git worktree list` always reports the main checkout first, so every
-        // entry after it is a worktree someone switched out. Counting by position
-        // rather than by path keeps the number right inside a linked worktree
-        // too, where the Session's own root is not the main one.
-        const listings = Array.isArray(status.worktrees) ? status.worktrees : []
-        const worktreeCount = Math.max(0, listings.length - 1)
+        // The label names this Session's own checkout, not how many exist: a count
+        // says nothing about which worktree the next write lands in. The branch is
+        // the name an operator recognises; the directory basename is the fallback
+        // for a checkout created without one.
+        const worktreeName = worktreeLabel(worktree)
+        const label = worktreeName.length > 0 ? `${t('dock.worktree')}(${worktreeName})` : t('dock.worktree')
+
 
         // The Menu closes itself on any outside pointerdown, so a second press
         // on the pill has to toggle. The rect comes from the event rather than
@@ -622,20 +662,19 @@ window.__ModuleLoader__.load({
             canRender(p.Checkbox)
               ? h(p.Checkbox, {
                   checked: on,
-                  disabled: snapshot.busy,
-                  // The count rides inside the label so it sits against the word:
-                  // a separate chip would be pushed out by the row's own gap.
-                  label: `${t('dock.worktree')}(${worktreeCount})`,
+                  disabled: snapshot.busy || locked,
+                  className: 'dsh-ik-worktree',
+                  label,
                   title: checkTitle,
                   onChange: (next) => {
-                    void store.setWorktreeMode(sessionId, next, t('menu.worktreeFailed'))
+                    void store.setWorktreeMode(sessionId, next, { failed: t('menu.worktreeFailed'), locked: t('menu.worktreeLocked') })
                   },
                 })
               : h(
                   'label',
-                  null,
-                  h('input', { type: 'checkbox', checked: on, onChange: () => store.setWorktreeMode(sessionId, !on, t('menu.worktreeFailed')) }),
-                  `${t('dock.worktree')}(${worktreeCount})`,
+                  { className: 'dsh-ik-worktree' },
+                  h('input', { type: 'checkbox', checked: on, disabled: snapshot.busy || locked, onChange: () => store.setWorktreeMode(sessionId, !on, { failed: t('menu.worktreeFailed'), locked: t('menu.worktreeLocked') }) }),
+                  h('span', null, label),
                 ),
           ),
         )
@@ -987,10 +1026,16 @@ window.__ModuleLoader__.load({
         const store = createStore()
         const { BranchDock, GitOverlay, PermanentDeleteMenuItem, SessionRowContextAction, DeleteConfirmation } = createUi(store, primitives)
 
-        ctx.slots.inject('conversation.composer.dock', () =>
+        // `conversation.input.left` is the seat immediately after the composer's
+        // own mode group, so the chip and the checkbox sit beside the mode
+        // selector rather than below the card. The shipped `InputBar` mounts it
+        // for both the `hero` and the `composer` variant — unlike
+        // `conversation.composer.dock`, which a new Session never renders — so a
+        // Session offers the branch before its first message too.
+        ctx.slots.inject('conversation.input.left', () =>
           ctx.slots.register(
             {
-              name: 'conversation.composer.dock',
+              name: 'conversation.input.left',
               id: 'interaction-kit-branch',
               order: -10,
               locale: NS,

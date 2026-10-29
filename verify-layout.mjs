@@ -52,21 +52,30 @@ const dictionary = { ns: null, dicts: {} }
 const answers = {
   status: {
     ok: true,
-    cwd: '/repo',
-    repositoryRoot: '/Users/me/code/bi-service',
-    branch: 'feature/mcp-cli-html-page',
+    cwd: '/work/repo',
+    repositoryRoot: '/work/repo',
+    branch: 'feature/topic-a',
     detached: false,
-    branches: ['feature/mcp-cli-html-page', 'master', 'saas-pre-release', 'fix/page-card-draft-record-pre-release', 'saas-master'],
-    branchTotal: 5,
+    branches: ['feature/topic-a', 'main', 'release', 'fix/typo'],
+    branchTotal: 4,
     worktrees: [
-      { path: '/Users/me/code/bi-service', branch: 'master', bare: false, current: false },
-      { path: '/Users/me/code/bi-service/.worktrees/a', branch: 'feature/a', bare: false, current: true },
-      { path: '/Users/me/code/bi-service/.worktrees/b', branch: 'feature/b', bare: false, current: false },
+      { path: '/work/repo', branch: 'main', bare: false, current: false },
+      { path: '/work/repo/.worktrees/topic-b', branch: 'feature/topic-b', bare: false, current: true },
     ],
     dirtyCount: 9,
     linkedWorktree: false,
     worktreeMode: true,
-    worktree: null,
+    worktreeLocked: false,
+    worktree: {
+      path: '/work/repo/.worktrees/topic-b',
+      branch: 'feature/topic-b',
+      baseCommit: '0000000',
+      repositoryRoot: '/work/repo',
+      originalCwd: '/work/repo',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      managedBy: 'service',
+      entered: true,
+    },
   },
 }
 
@@ -236,9 +245,16 @@ const rowCell = registrations.find((entry) => entry.id === 'interaction-kit-cont
 const deleteDialog = registrations.find((entry) => entry.id === 'interaction-kit-delete-dialog')
 
 // ---------------------------------------------------------------- dock row --
+/** The untouched Host answer every variant below departs from. */
+const baseStatus = answers.status
 dock.Component({ t, sessionId: 'session-probe' })
 await flush()
 const dockTree = dock.Component({ t, sessionId: 'session-probe' })
+
+// The seat decides when the chip is reachable at all: `composer.dock` is skipped
+// by the hero composer a fresh Session renders, while `input.left` is mounted by
+// the InputBar in both variants and follows the mode selector.
+check(dock.name === 'conversation.input.left', `the chip mounts beside the mode selector (${dock.name})`)
 
 const dockRow = byClass(dockTree, 'dsh-ik-dock')[0]
 check(dockRow !== undefined, 'dock renders a single .dsh-ik-dock row')
@@ -248,16 +264,53 @@ check(controls[0]?.type === 'Pill', `first control is the shipped Pill (${contro
 check(controls[1]?.type === 'Checkbox', `second control is the shipped Checkbox (${controls[1]?.type})`)
 check(controls[1]?.props?.checked === true, 'the checkbox reflects worktreeMode from the Host')
 check(controls[1]?.props?.role === undefined, 'the checkbox is not a role="switch" toggle')
+check(controls[1]?.props?.className === 'dsh-ik-worktree', 'the checkbox carries the styling hook')
 
 // The count rides inside the checkbox label, in English parentheses, so it sits
 // against the word instead of being pushed out by the row's gap.
 const worktreeLabel = String(controls[1]?.props?.label ?? '')
-check(worktreeLabel === 'worktree(2)', `the count rides in the label as worktree(N) (${JSON.stringify(worktreeLabel)})`)
+check(worktreeLabel === 'worktree(feature/topic-b)', `the label names the worktree (${JSON.stringify(worktreeLabel)})`)
 check(!/[（(]\s/.test(worktreeLabel), `the parenthesis is tight and ASCII (${JSON.stringify(worktreeLabel)})`)
+check(!/\d/.test(worktreeLabel), `the label counts nothing (${JSON.stringify(worktreeLabel)})`)
+
+// A checkout created without a branch still has a directory worth naming.
+const withBranchless = { ...answers.status, worktree: { path: '/work/repo/.worktrees/hotfix', branch: '' } }
+answers.status = withBranchless
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+const branchlessLabel = String(byType(dock.Component({ t, sessionId: 'session-probe' }), 'Checkbox')[0]?.props?.label ?? '')
+check(branchlessLabel === 'worktree(hotfix)', `a branchless checkout falls back to its directory (${JSON.stringify(branchlessLabel)})`)
+
+// No worktree yet: the plain word, no empty parentheses.
+answers.status = { ...answers.status, worktreeMode: false, worktree: null }
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+const bareLabel = String(byType(dock.Component({ t, sessionId: 'session-probe' }), 'Checkbox')[0]?.props?.label ?? '')
+check(bareLabel === 'worktree', `the bare label has no parentheses (${JSON.stringify(bareLabel)})`)
+answers.status = baseStatus
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
 
 const pillLabel = byClass(dockTree, 'dsh-ik-dock-label')[0]
-check(pillLabel?.children?.[0] === 'feature/mcp-cli-html-page', `pill shows the branch (${JSON.stringify(pillLabel?.children?.[0])})`)
+check(pillLabel?.children?.[0] === 'feature/topic-a', `pill shows the branch (${JSON.stringify(pillLabel?.children?.[0])})`)
 check(byType(dockTree, 'IconBranchOutlineRegular').length === 1, 'pill carries the shipped branch glyph')
+
+// A Session that has already exchanged a message keeps its worktree: undoing it
+// would leave the earlier writes in the checkout and send later ones elsewhere.
+// The Host reports the rule, and the chip both disables itself and says why.
+answers.status = { ...baseStatus, worktreeLocked: true }
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+const lockedTree = dock.Component({ t, sessionId: 'session-probe' })
+const lockedBox = byType(lockedTree, 'Checkbox')[0]
+check(lockedBox?.props?.checked === true, 'a locked worktree still reads as on')
+check(lockedBox?.props?.disabled === true, 'the started Session cannot clear the checkbox')
+check(String(lockedBox?.props?.title ?? '').includes('stays'), `the tooltip states the lock (${JSON.stringify(lockedBox?.props?.title)})`)
+answers.status = baseStatus
+dock.Component({ t, sessionId: 'session-probe' })
+await flush()
+const unlockedBox = byType(dock.Component({ t, sessionId: 'session-probe' }), 'Checkbox')[0]
+check(unlockedBox?.props?.disabled === false, 'a fresh Session can still clear the checkbox')
 
 // ------------------------------------------------------------- branch menu --
 const pill = byType(dockTree, 'Pill')[0]
@@ -271,12 +324,12 @@ check(menu?.props?.open === true, 'the Menu is open after the pill is clicked')
 check(menu?.props?.portal === true, 'the Menu portals to the document body')
 check(menu?.props?.side === 'top', `the Menu opens upwards (side=${menu?.props?.side})`)
 check(byType(overlayTree, 'Checkbox').length === 0, 'the Menu holds no worktree checkbox')
-check(JSON.stringify(overlayTree).includes('worktree') === false, 'the Menu never mentions worktree')
+check(text(menu).toLowerCase().includes('worktree') === false, 'the Menu never mentions worktree')
 
 const search = byType(overlayTree, 'Input')[0]
 check(search !== undefined, 'the Menu has the search field')
 const inputText = JSON.stringify(search?.props?.placeholder)
-check(inputText.includes('bi-service'), `search placeholder names the repo (${inputText})`)
+check(inputText.includes('repo'), `search placeholder names the repo (${inputText})`)
 check(search?.props?.type === 'search', 'the search field is a search input')
 
 // The section label is the shipped `MenuGroup`, not a hand-rolled heading: that
@@ -286,7 +339,7 @@ const group = byType(overlayTree, 'MenuGroup')[0]
 check(group !== undefined, 'the Menu holds a shipped MenuGroup')
 check(String(group?.props?.label ?? '') === 'Branches', `the group label reads "Branches" (${JSON.stringify(group?.props?.label)})`)
 const grouped = byType(group ?? {}, 'MenuItemButton')
-check(grouped.length === 5, `the group holds every branch row (${grouped.length})`)
+check(grouped.length === 4, `the group holds every branch row (${grouped.length})`)
 
 // The search field rides above the group in a pinned row, styled borderless the
 // way a shipped searchable menu styles it.
@@ -314,13 +367,13 @@ check(/\.dsh-ik-search-row\{[^}]*display:flex/.test(css), 'the search row stretc
 
 // Typing a filter narrows the rows and states the matched/total count in the
 // group heading itself, so no extra chrome appears beside the label.
-search.props.onChange({ target: { value: 'pre-release' } })
+search.props.onChange({ target: { value: 'fix/' } })
 const filtered = overlay.Component({ t })
 const filteredRows = byType(filtered, 'MenuItemButton')
-check(filteredRows.length === 2, `the search narrows the rows (${filteredRows.length} of 5)`)
+check(filteredRows.length === 1, `the search narrows the rows (${filteredRows.length} of 4)`)
 const filteredLabel = String(byType(filtered, 'MenuGroup')[0]?.props?.label ?? '')
-check(filteredLabel === 'Branches · 2 / 5', `the heading states the match count (${JSON.stringify(filteredLabel)})`)
-check(filteredRows.every((row) => text(row).includes('pre-release')), 'every remaining row matches the search')
+check(filteredLabel === 'Branches · 1 / 4', `the heading states the match count (${JSON.stringify(filteredLabel)})`)
+check(filteredRows.every((row) => text(row).includes('fix/')), 'every remaining row matches the search')
 search.props.onChange({ target: { value: '' } })
 
 const footer = menu?.props?.footer ?? []
@@ -328,10 +381,10 @@ check(footer.length === 1, `the Menu footer holds one row (${footer.length})`)
 check(String(footer[0]?.label).includes('Create and check out'), `footer row is the create action (${JSON.stringify(footer[0]?.label)})`)
 
 const rows = byType(overlayTree, 'MenuItemButton')
-check(rows.length === 5, `the Menu lists every branch (${rows.length} rows)`)
+check(rows.length === 4, `the Menu lists every branch (${rows.length} rows)`)
 const currentRows = rows.filter((row) => row.props.current === true)
 check(currentRows.length === 1, 'exactly one row is marked current')
-check(text(currentRows[0] ?? {}).includes('feature/mcp-cli-html-page'), 'the current row is the checked-out branch')
+check(text(currentRows[0] ?? {}).includes('feature/topic-a'), 'the current row is the checked-out branch')
 check(text(currentRows[0] ?? {}).includes('9 uncommitted'), 'the current row carries the uncommitted hint')
 check(byClass(overlayTree, 'dsh-ik-branch-check').length === 1, 'only the current row shows the checkmark')
 check(rows.every((row) => row.props.icon?.type === 'IconBranchOutlineRegular'), 'every row carries the branch glyph')
