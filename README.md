@@ -102,28 +102,29 @@ specifier: github:yixin2021/dsh-interaction-kit#main
 version:   https://codeload.github.com/yixin2021/dsh-interaction-kit/tar.gz/3eeee4519883...
 ```
 
-So re-running `add` with an unchanged spec is a no-op: pnpm sees the lockfile already satisfies it
-and skips resolution. New commits on `main` are **not** picked up that way. To move to a new commit,
-drop the dependency and add it again, which forces a fresh resolution:
+Which means the spec you typed is *not* what you are running — the recorded commit is. Two
+consequences, and they differ:
+
+**Following a branch (`#main`) needs a remove.** Re-adding an identical spec is refused as
+`already-installed`, because from the manager's view nothing changed:
 
 ```bash
 dsh plugin --profile web rm  dsh-interaction-kit
 dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#main
 ```
 
-In the desktop app the same two steps are the plugin's **Remove** then reinstall from the source.
+In the desktop app that is the plugin's **Remove** followed by installing from the source again.
 
-Then **restart DSH**, because the Host half is imported once at profile start. Reloading the page
-alone leaves the old Host code running.
-
-Pinning a release instead of a branch is unambiguous and needs no re-resolution:
+**Switching to a tag or commit needs no remove** — the spec differs, so it installs over the top
+and resolves fresh:
 
 ```bash
 dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#v1.0.0
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#3eeee45
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#e4aa663
 ```
 
-A tag or commit spec records a new lockfile entry, so changing it always fetches.
+After either one, **restart DSH**: the Host half is imported once at profile start, so reloading the
+page alone leaves the old Host code running.
 
 ### Two install modes, one tradeoff
 

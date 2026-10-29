@@ -87,8 +87,10 @@ specifier: github:yixin2021/dsh-interaction-kit#main
 version:   https://codeload.github.com/yixin2021/dsh-interaction-kit/tar.gz/3eeee4519883...
 ```
 
-所以用同一个 spec 再 `add` 一次是空操作——pnpm 认为 lockfile 已满足，直接跳过解析，`main` 上的新提交
-**不会**被这样拿到。要换到新提交，必须先删掉依赖再重新添加，强制重新解析：
+也就是说，你写的那个 spec 并不是实际在跑的版本——真正生效的是被记录的 commit。由此有两条不同的结论：
+
+**跟分支走（`#main`）需要先移除。** 用完全相同的 spec 再装一次会被拒绝（`already-installed`），
+因为从管理器的角度看没有变化：
 
 ```bash
 dsh plugin --profile web rm  dsh-interaction-kit
@@ -97,14 +99,14 @@ dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#main
 
 桌面端的等价操作：插件页里先 **移除**，再从来源重新安装。
 
-之后要**重启 DSH**：Host 半在 profile 启动时只 import 一次，光刷新页面跑的还是旧 Host 代码。
-
-钉一个发布版本则没有这个歧义，换 spec 就必然重新拉取：
+**切到标签或某个 commit 则不用移除**——spec 变了，直接覆盖安装并重新解析：
 
 ```bash
 dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#v1.0.0
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#3eeee45
+dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#e4aa663
 ```
+
+两种方式之后都要**重启 DSH**：Host 半在 profile 启动时只 import 一次，光刷新页面跑的还是旧 Host 代码。
 
 ### 两种安装方式，一个取舍
 
