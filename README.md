@@ -93,11 +93,23 @@ The Host refuses that transition with `worktree-locked` and reports `started` an
 
 ## Install
 
+Published on npm as [`dsh-interaction-kit`](https://www.npmjs.com/package/dsh-interaction-kit):
+
 ```bash
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit
+dsh plugin --profile web add dsh-interaction-kit
 ```
 
-Reload the page. Removing it:
+Or install it by name from the **Plugins** page in the desktop app. The plugin manager reads the npm
+registry (falling back to npmmirror when the package or registry is unreachable), records the version
+in the profile, and enables the bundle. Then reload the page.
+
+Pin an exact release when you want one:
+
+```bash
+dsh plugin --profile web add dsh-interaction-kit@0.1.0
+```
+
+Removing it:
 
 ```bash
 dsh plugin --profile web rm dsh-interaction-kit
@@ -109,38 +121,24 @@ From a local checkout, install the directory instead:
 dsh plugin --profile web add /absolute/path/to/dsh-interaction-kit
 ```
 
+Version `0.1.0` is the first npm release. The earlier `v1.0.0` / `v1.1.0` tags belonged to the
+GitHub-install era and were retired; npm is the supported install path from here on.
+
 ## Updating
 
-`package.json` in the profile records the spec, but the lockfile pins the **exact commit** the spec
-resolved to:
-
-```
-specifier: github:yixin2021/dsh-interaction-kit#main
-version:   https://codeload.github.com/yixin2021/dsh-interaction-kit/tar.gz/3eeee4519883...
-```
-
-Which means the spec you typed is *not* what you are running — the recorded commit is. Two
-consequences, and they differ:
-
-**Following a branch (`#main`) needs a remove.** Re-adding an identical spec is refused as
-`already-installed`, because from the manager's view nothing changed:
+The profile records the spec it installed with (`^0.1.0` for a plain `add`, the exact version when
+you pin one), and the lockfile pins the resolved tarball. New releases are published to npm, so
+updating means asking for the newer version:
 
 ```bash
-dsh plugin --profile web rm  dsh-interaction-kit
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#main
+dsh plugin --profile web add dsh-interaction-kit@0.1.1
 ```
 
-In the desktop app that is the plugin's **Remove** followed by installing from the source again.
+That installs over the current copy and resolves the new tarball. Installing the bare name again
+when it is already installed is refused as `already-installed` — the manager cannot tell that you
+meant "latest" this time. In the desktop app, use the plugin's **Remove** and install it again.
 
-**Switching to a tag or commit needs no remove** — the spec differs, so it installs over the top
-and resolves fresh:
-
-```bash
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#v1.0.0
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#e4aa663
-```
-
-After either one, **restart DSH**: the Host half is imported once at profile start, so reloading the
+After any update, **restart DSH**: the Host half is imported once at profile start, so reloading the
 page alone leaves the old Host code running.
 
 ### Two install modes, one tradeoff
@@ -148,10 +146,10 @@ page alone leaves the old Host code running.
 | Spec | Editing the source… | Use it when |
 | --- | --- | --- |
 | `/local/path` or `link:/local/path` | takes effect immediately (plus the reload rules below) | you are developing the plugin |
-| `github:owner/repo` | has no effect until you push and reinstall | you want the installed copy to be exactly what is published |
+| `dsh-interaction-kit` (npm) | has no effect until you `npm publish` a new version | you want the installed copy to be exactly what is published |
 
-A `link:` install is a symlink into your checkout, so the running plugin sees your working tree.
-A `github:` install is a real directory unpacked from the tarball — read-only in practice, and
+A `link:` install is a symlink into your checkout, so the running plugin sees your working tree. An
+npm install is a real directory unpacked from the published tarball — read-only in practice, and
 identical to what everyone else gets. Switching between them is just `rm` + `add`.
 
 ### What needs a reload and what needs a restart
@@ -200,18 +198,24 @@ node verify-host.mjs <sessionId>   # drives the Host route against a sandboxed $
 `verify-layout.mjs` renders the slot components against a stub React and asserts the resulting tree
 — which primitive was used, which classes, which locale strings, and the safety properties (no
 archive click, no viewport-wide listener). The harnesses are development-only: `files` in
-`package.json` keeps them out of the published tarball, so a `github:` install never receives them.
+`package.json` keeps them out of the published tarball.
 
 ### Releasing
 
 ```bash
-# 1. bump "version" in package.json, then
-git commit -am "chore: release v1.0.1"
-git tag -a v1.0.1 -m "v1.0.1"
+# 1. bump "version" in package.json, then commit and tag
+git commit -am "chore: release v0.1.1"
+git tag -a v0.1.1 -m "v0.1.1"
 git push origin main --follow-tags
+
+# 2. publish to npm (prepublishOnly runs node --check and the test harnesses)
+npm publish
 ```
 
-Consumers pin `#v1.0.1`; anyone on `#main` re-resolves on their next remove + add.
+`publishConfig.registry` points `npm publish` at the official registry even when your local `npm`
+default is a mirror. Publishing needs a token that can write `dsh-interaction-kit`; run `npm login`
+once per machine. Consumers pin `dsh-interaction-kit@0.1.1`, while a plain `add` follows the `0.1.x`
+range recorded in the profile.
 
 ## License
 

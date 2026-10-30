@@ -1,6 +1,6 @@
 {
   "name": "dsh-interaction-kit",
-  "version": "1.2.0",
+  "version": "0.1.0",
   "description": "Interaction and convenience upgrades for the DSH Web UI: right-click a Session for its full menu (with permanent delete), a Git branch chip under the composer with switching, and an opt-in worktree mode that creates a worktree on the first write and then shows its name instead of the checkbox.",
   "keywords": [
     "deepseek-harness",
@@ -42,7 +42,11 @@
   ],
   "scripts": {
     "check": "node --check index.js && node --check client.js",
-    "test": "node verify-client.mjs && node verify-layout.mjs"
+    "test": "node verify-client.mjs && node verify-layout.mjs",
+    "prepublishOnly": "npm run check && npm test"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
   },
   "dsh": {
     "bundle": {

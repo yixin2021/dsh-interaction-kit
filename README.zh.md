@@ -74,11 +74,22 @@ DSH Web 交互增强套件：一个插件，三处改进，全部用原生 UI �
 
 ## 安装
 
+已发布到 npm：[`dsh-interaction-kit`](https://www.npmjs.com/package/dsh-interaction-kit)：
+
 ```bash
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit
+dsh plugin --profile web add dsh-interaction-kit
 ```
 
-刷新页面即可。卸载：
+也可以在桌面端的**插件**页里按包名安装。插件管理器会查 npm 官方源（包或源不可达时回退到
+npmmirror），把版本写进 profile 并启用 bundle。装好刷新页面即可。
+
+需要固定版本时：
+
+```bash
+dsh plugin --profile web add dsh-interaction-kit@0.1.0
+```
+
+卸载：
 
 ```bash
 dsh plugin --profile web rm dsh-interaction-kit
@@ -90,44 +101,30 @@ dsh plugin --profile web rm dsh-interaction-kit
 dsh plugin --profile web add /绝对路径/dsh-interaction-kit
 ```
 
+`0.1.0` 是第一个 npm 版本；早先 GitHub 安装时期的 `v1.0.0` / `v1.1.0` 标签已撤下，此后以 npm 为准。
+
 ## 更新
 
-profile 的 `package.json` 只记录「声明的 spec」，真正钉住的是 lockfile 里那个**确切 commit**：
-
-```
-specifier: github:yixin2021/dsh-interaction-kit#main
-version:   https://codeload.github.com/yixin2021/dsh-interaction-kit/tar.gz/3eeee4519883...
-```
-
-也就是说，你写的那个 spec 并不是实际在跑的版本——真正生效的是被记录的 commit。由此有两条不同的结论：
-
-**跟分支走（`#main`）需要先移除。** 用完全相同的 spec 再装一次会被拒绝（`already-installed`），
-因为从管理器的角度看没有变化：
+profile 记录的是安装时的 spec（直接 `add` 会记成 `^0.1.0`，钉版本则记确切版本），lockfile 再钉住
+解析出来的 tarball。新版本发布到 npm 后，更新就是点名要新版本：
 
 ```bash
-dsh plugin --profile web rm  dsh-interaction-kit
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#main
+dsh plugin --profile web add dsh-interaction-kit@0.1.1
 ```
 
-桌面端的等价操作：插件页里先 **移除**，再从来源重新安装。
+这会覆盖安装并重新解析 tarball。已装过时再用裸包名装一次会被拒绝（`already-installed`），因为管理器
+无法判断你这次想要「最新版」。桌面端请用插件的**移除**，然后再装一次。
 
-**切到标签或某个 commit 则不用移除**——spec 变了，直接覆盖安装并重新解析：
-
-```bash
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#v1.0.0
-dsh plugin --profile web add github:yixin2021/dsh-interaction-kit#e4aa663
-```
-
-两种方式之后都要**重启 DSH**：Host 半在 profile 启动时只 import 一次，光刷新页面跑的还是旧 Host 代码。
+**重启 DSH**：Host 半在 profile 启动时只 import 一次，光刷新页面跑的还是旧 Host 代码。
 
 ### 两种安装方式，一个取舍
 
 | spec | 改源码的效果 | 什么时候用 |
 | --- | --- | --- |
 | `/本地路径` 或 `link:/本地路径` | 立即生效（再叠加下面那两条刷新规则） | 你在开发这个插件 |
-| `github:owner/repo` | 不生效，必须先 push 再重装 | 你想让装着的就是已发布的那份 |
+| `dsh-interaction-kit`（npm） | 不生效，必须先 `npm publish` 新版本 | 你想让装着的就是已发布的那份 |
 
-`link:` 是指向你工作区的软链，跑的就是你正在改的代码；`github:` 是从 tarball 解出来的真实目录，
+`link:` 是指向你工作区的软链，跑的就是你正在改的代码；npm 安装是从发布 tarball 解出来的真实目录，
 实际上等同于只读，并且和别人装到的完全一致。两者互转就是 `rm` + `add`。
 
 ### 哪些改动需要刷新、哪些需要重启
@@ -174,18 +171,23 @@ node verify-host.mjs <sessionId>   # 在沙箱 $DSH_HOME 中驱动 Host 路由
 
 `verify-layout.mjs` 用桩 React 渲染各 Slot 组件并断言产出的树——用了哪个原生组件、哪些类名、
 哪些文案，以及关键安全性质（绝不误触归档、不在整页挂监听）。校验脚本仅用于开发：`package.json` 的 `files`
-字段把它们排除在发布的 tarball 之外，所以用 `github:` 装的人不会收到它们。
+字段把它们排除在发布的 tarball 之外。
 
 ### 发布新版本
 
 ```bash
-# 1. 先改 package.json 里的 "version"，然后
-git commit -am "chore: release v1.0.1"
-git tag -a v1.0.1 -m "v1.0.1"
+# 1. 先改 package.json 里的 "version"，然后提交并打标签
+git commit -am "chore: release v0.1.1"
+git tag -a v0.1.1 -m "v0.1.1"
 git push origin main --follow-tags
+
+# 2. 发布到 npm（prepublishOnly 会先跑 node --check 和校验脚本）
+npm publish
 ```
 
-别人用 `#v1.0.1` 钉版本；跟在 `#main` 上的人下次「移除 + 重装」时更新。
+`publishConfig.registry` 会让 `npm publish` 走官方源，即使本机默认是镜像。发布需要对该包有写权限的
+token，每台机器先 `npm login` 一次。别人用 `dsh-interaction-kit@0.1.1` 钉版本，直接 `add` 的则跟随
+profile 里记录的 `0.1.x` 范围。
 
 ## 许可证
 
