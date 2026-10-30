@@ -134,9 +134,9 @@ updating means asking for the newer version:
 dsh plugin --profile web add dsh-interaction-kit@0.1.1
 ```
 
-That installs over the current copy and resolves the new tarball. Installing the bare name again
-when it is already installed is refused as `already-installed` — the manager cannot tell that you
-meant "latest" this time. In the desktop app, use the plugin's **Remove** and install it again.
+That installs over the current copy and resolves the new tarball. In the desktop app, installing the
+bare name again when it is already installed is refused as `already-installed` — the page cannot tell
+that you meant "latest" this time. Use the plugin's **Remove** and install it again.
 
 After any update, **restart DSH**: the Host half is imported once at profile start, so reloading the
 page alone leaves the old Host code running.

@@ -112,8 +112,8 @@ profile 记录的是安装时的 spec（直接 `add` 会记成 `^0.1.0`，钉版
 dsh plugin --profile web add dsh-interaction-kit@0.1.1
 ```
 
-这会覆盖安装并重新解析 tarball。已装过时再用裸包名装一次会被拒绝（`already-installed`），因为管理器
-无法判断你这次想要「最新版」。桌面端请用插件的**移除**，然后再装一次。
+这会覆盖安装并重新解析 tarball。桌面端在已装过时再用裸包名装一次会被拒绝（`already-installed`），
+因为插件页无法判断你这次想要「最新版」；请用插件的**移除**，然后再装一次。
 
 **重启 DSH**：Host 半在 profile 启动时只 import 一次，光刷新页面跑的还是旧 Host 代码。
 
