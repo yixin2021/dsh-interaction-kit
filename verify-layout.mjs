@@ -82,9 +82,29 @@ const answers = {
   },
 }
 
+/** Every request body the Client half sent, in order. */
+const requests = []
+
+/** Text the stubbed clipboard received. */
+let clipboard = []
+
+globalThis.navigator = {
+  clipboard: {
+    writeText: async (value) => {
+      clipboard.push(value)
+    },
+  },
+}
+
 globalThis.fetch = async (url, init) => {
   const body = JSON.parse(init.body)
-  const answer = body.action === 'set-worktree-mode' ? { ...answers.status, worktreeMode: body.enabled === true } : (answers[body.action] ?? { ok: true })
+  requests.push(body)
+  const answer =
+    body.action === 'set-worktree-mode'
+      ? { ...answers.status, worktreeMode: body.enabled === true }
+      : body.action === 'open-path'
+        ? (answers.openPath ?? { ok: true })
+        : (answers[body.action] ?? { ok: true })
   return { ok: true, status: 200, json: async () => answer }
 }
 
@@ -139,7 +159,10 @@ const primitives = Object.fromEntries(
     'Checkbox',
     'IconBranchOutlineRegular',
     'IconCheckOutlineRegular',
+    'IconCopyOutlineRegular',
+    'IconFolderOpenOutlineRegular',
     'IconPlusOutlineRegular',
+    'IconRightUpOutlineRegular',
     'IconSearchOutlineRegular',
     'IconTrashOutlineRegular',
     'Input',
@@ -147,6 +170,7 @@ const primitives = Object.fromEntries(
     'MenuGroup',
     'MenuItemButton',
     'Modal',
+    'PathLabel',
     'Pill',
     'RiskConfirmation',
     'Tag',
@@ -180,14 +204,25 @@ const windowStub = {
   innerHeight: 800,
 }
 
-const source = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
-globalThis.window = windowStub
-globalThis.document = {
-  addEventListener() {},
-  removeEventListener() {},
+/** Document-level listeners the plugin installed, by `type:capture` key. */
+const documentListeners = new Map()
+
+const documentStub = {
+  addEventListener(type, handler, capture) {
+    documentListeners.set(`${type}:${capture === true ? 'capture' : 'bubble'}`, handler)
+  },
+  removeEventListener(type, handler, capture) {
+    const key = `${type}:${capture === true ? 'capture' : 'bubble'}`
+    // Only the handler that registered may remove it.
+    if (documentListeners.get(key) === handler) documentListeners.delete(key)
+  },
   // The overlay looks up the portaled menu list to wire its sticky headings.
   querySelector: () => null,
 }
+
+const source = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
+globalThis.window = windowStub
+globalThis.document = documentStub
 // The branch menu measures its sticky group headings on the first painted frame.
 globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 0)
 globalThis.cancelAnimationFrame = (handle) => clearTimeout(handle)
@@ -583,6 +618,185 @@ await flush()
 const guarded = row.listeners['contextmenu']
 check(guarded === undefined, 'an unidentifiable trigger installs no listener')
 check(typeof guarded !== 'function', 'an unidentifiable trigger leaves the native menu intact')
+
+// --------------------------------------------------- file reference menu --
+answers.status = baseStatus
+const fileMenuEntry = registrations.find((entry) => entry.id === 'interaction-kit-file-menu')
+check(fileMenuEntry !== undefined, 'a file-reference menu is registered')
+check(fileMenuEntry?.name === 'shell.overlay', `it portals through the overlay (${fileMenuEntry?.name})`)
+
+/** A stand-in for one rendered reference node, with the attributes it carries. */
+function referenceNode({ title, text, kind, sessionId }) {
+  const holder = { getAttribute: (name) => (name === 'data-conversation-session' ? sessionId : null) }
+  const node = {
+    textContent: text ?? '',
+    getAttribute(name) {
+      if (name === 'title') return title ?? null
+      if (name === 'data-ref-chip') return kind ?? null
+      return null
+    },
+    // The plugin asks `closest` twice: once for the reference, once for the
+    // Conversation that owns it. `sessionId: null` models a reference drawn
+    // outside any Conversation.
+    closest(selector) {
+      if (selector === '[data-conversation-session]') return sessionId === null ? null : holder
+      return node
+    },
+  }
+  return node
+}
+
+/** A stand-in for a node that is not a reference at all. */
+function plainNode(sessionId) {
+  const holder = { getAttribute: (name) => (name === 'data-conversation-session' ? sessionId : null) }
+  return {
+    textContent: 'ordinary paragraph text',
+    getAttribute: () => null,
+    closest(selector) {
+      if (selector === '[data-conversation-session]') return sessionId === null ? null : holder
+      return null
+    },
+  }
+}
+
+/** Raise one right-click through the listener the plugin installed. */
+function rightClick(target, x = 320, y = 240) {
+  const handler = documentListeners.get('contextmenu:capture')
+  if (typeof handler !== 'function') throw new Error('the plugin installed no contextmenu listener')
+  const state = { prevented: 0, stopped: 0 }
+  const event = {
+    target,
+    clientX: x,
+    clientY: y,
+    defaultPrevented: false,
+    preventDefault() {
+      state.prevented += 1
+      event.defaultPrevented = true
+    },
+    stopPropagation() {
+      state.stopped += 1
+    },
+  }
+  handler(event)
+  return state
+}
+
+fileMenuEntry.Component({ t })
+await flush()
+check(typeof documentListeners.get('contextmenu:capture') === 'function', 'the file menu listens for contextmenu in the capture phase')
+
+const closedTree = fileMenuEntry.Component({ t })
+const closedMenu = byType(closedTree, 'Menu')[0]
+check(closedMenu?.props?.open === false, 'the menu starts closed')
+check(byType(closedTree, 'MenuItemButton').length === 0, 'a closed menu renders no rows')
+
+// A right-click on an `@`-mention chip inside a Conversation opens the menu at
+// the pointer.
+const chipState = rightClick(referenceNode({ title: '@src/loop.ts', kind: 'file', sessionId: 'session-probe' }))
+const openTree = fileMenuEntry.Component({ t })
+const openMenu = byType(openTree, 'Menu')[0]
+check(chipState.prevented === 1, 'right-clicking a chip suppresses the native menu')
+check(chipState.stopped === 1, 'right-clicking a chip stops the event reaching the chip')
+check(openMenu?.props?.open === true, 'the chip right-click opens the shipped Menu')
+check(openMenu?.props?.portal === true, 'the file Menu portals to the document body')
+check(openMenu?.props?.side === 'bottom', `the file Menu opens below the pointer (side=${openMenu?.props?.side})`)
+const anchor = openMenu?.props?.getAnchorRect?.()
+check(anchor?.left === 320 && anchor?.top === 240, `the menu anchors at the pointer (${JSON.stringify(anchor)})`)
+check(anchor?.width === 0 && anchor?.height === 0, 'the anchor is a zero-size box, so the menu clamps to the pointer exactly')
+
+// The heading names the path the reference stood for, with the `@` stripped.
+const fileHead = byClass(openTree, 'dsh-ik-file-head')[0]
+check(fileHead !== undefined, 'the menu names the target path above its rows')
+const pathLabel = byType(openTree, 'PathLabel')[0]
+check(pathLabel?.props?.path === 'src/loop.ts', `the heading states the resolved path (${JSON.stringify(pathLabel?.props?.path)})`)
+
+const fileRows = byType(openTree, 'MenuItemButton')
+check(fileRows.length === 3, `a file offers three rows (${fileRows.length})`)
+check(text(fileRows[0] ?? {}) === 'Open with the default app', `first row opens the file (${JSON.stringify(text(fileRows[0] ?? {}))})`)
+check(text(fileRows[1] ?? {}) === 'Show in the file manager', `second row reveals the file (${JSON.stringify(text(fileRows[1] ?? {}))})`)
+check(text(fileRows[2] ?? {}) === 'Copy path', `third row copies the path (${JSON.stringify(text(fileRows[2] ?? {}))})`)
+check(fileRows[2]?.props?.separatorBefore === true, 'the copy row is set apart by a separator')
+
+// Composing the open/reveal requests.
+requests.length = 0
+answers.openPath = { ok: true, path: '/work/repo/src/loop.ts' }
+fileRows[1].props.onSelect()
+await flush()
+check(requests.length === 1, `choosing the reveal row makes one Host call (${requests.length})`)
+const revealCall = requests[0] ?? {}
+check(revealCall.action === 'open-path', `the call uses the open-path action (${revealCall.action})`)
+check(revealCall.sessionId === 'session-probe', `the call names the Conversation's Session (${revealCall.sessionId})`)
+check(revealCall.path === 'src/loop.ts', `the call sends the path the chip stated (${JSON.stringify(revealCall.path)})`)
+check(revealCall.mode === 'reveal', `the call asks for a reveal (${revealCall.mode})`)
+check(byType(fileMenuEntry.Component({ t }), 'Menu')[0]?.props?.open === false, 'a successful reveal closes the menu')
+
+// A directory has no "show in the file manager" step of its own: opening it in
+// the file manager is already what the first row does.
+rightClick(referenceNode({ title: '@/work/repo', kind: 'folder', sessionId: 'session-probe' }))
+const folderTree = fileMenuEntry.Component({ t })
+const folderRows = byType(folderTree, 'MenuItemButton')
+check(folderRows.length === 2, `a directory offers two rows (${folderRows.length})`)
+check(text(folderRows[0] ?? {}) === 'Open in the file manager', `a directory opens in the file manager (${JSON.stringify(text(folderRows[0] ?? {}))})`)
+check(folderRows.some((row) => text(row) === 'Show in the file manager') === false, 'a directory is not offered a redundant reveal row')
+
+// Copying must not need the Host at all.
+clipboard = []
+requests.length = 0
+folderRows[1].props.onSelect()
+await flush()
+check(clipboard.length === 1 && clipboard[0] === '/work/repo', `copy writes the path to the clipboard (${JSON.stringify(clipboard)})`)
+check(requests.length === 0, 'copying the path never reaches the Host')
+check(byType(fileMenuEntry.Component({ t }), 'Menu')[0]?.props?.open === false, 'copying closes the menu')
+
+// A Host refusal becomes the operator's own sentence, and the menu stays open
+// so the row can be tried again.
+answers.openPath = { ok: false, code: 'missing-path', message: 'Nothing exists at /work/repo/gone.ts.' }
+rightClick(referenceNode({ title: '@gone.ts', kind: 'file', sessionId: 'session-probe' }))
+byType(fileMenuEntry.Component({ t }), 'MenuItemButton')[0].props.onSelect()
+await flush()
+const failedTree = fileMenuEntry.Component({ t })
+check(byType(failedTree, 'Menu')[0]?.props?.open === true, 'a refusal leaves the menu open')
+const alert = byClass(failedTree, 'dsh-ik-menu-status')[0]
+check(String(alert?.props?.role) === 'alert', 'the refusal is announced as an alert')
+check(String(text(alert)) === 'That path no longer exists.', `the refusal is translated, not forwarded (${JSON.stringify(text(alert))})`)
+
+// Markdown mentions and links are matched on the shipped class, not on position,
+// and the path comes from the title rather than from the visible label.
+const markdownState = rightClick(referenceNode({ title: 'src/app.tsx', text: 'the app shell', kind: null, sessionId: 'session-probe' }))
+check(markdownState.prevented === 1, 'a Markdown file link also opens the menu')
+check(byClass(fileMenuEntry.Component({ t }), 'dsh-ik-file-head').length === 1, 'the Markdown target names its own path')
+
+/** Close whatever the previous case left open. */
+function dismissMenu() {
+  byType(fileMenuEntry.Component({ t }), 'Menu')[0]?.props?.onClose?.()
+}
+
+// Everything else must be left strictly alone.
+dismissMenu()
+check(byType(fileMenuEntry.Component({ t }), 'Menu')[0]?.props?.open === false, 'dismissing the menu leaves no rows behind')
+
+const plainState = rightClick(plainNode('session-probe'))
+check(plainState.prevented === 0, 'right-clicking ordinary text keeps the native menu')
+check(plainState.stopped === 0, 'right-clicking ordinary text does not swallow the event')
+
+const outsideState = rightClick(referenceNode({ title: '@src/loop.ts', kind: 'file', sessionId: null }))
+check(outsideState.prevented === 0, 'a reference outside any Conversation keeps the native menu')
+
+// A previewed Markdown link drops its title and shows a label instead; the
+// label is not a path, so the reference stays inert rather than guessing.
+const anonymousState = rightClick(referenceNode({ title: null, text: 'diagram.png', kind: 'file', sessionId: 'session-probe' }))
+check(anonymousState.prevented === 0, 'a reference that states no path keeps the native menu')
+check(byType(fileMenuEntry.Component({ t }), 'MenuItemButton').length === 0, 'an inert reference opens nothing')
+
+// Without the shipped Menu the plugin could only swallow the native menu and
+// draw nothing in its place, so it must install no listener at all.
+const savedMenu = primitives.Menu
+delete primitives.Menu
+documentListeners.clear()
+fileMenuEntry.Component({ t })
+await flush()
+check(documentListeners.has('contextmenu:capture') === false, 'without the shipped Menu no listener is installed')
+primitives.Menu = savedMenu
 
 console.log(failures.length === 0 ? '\nRESULT ok' : `\nRESULT ${failures.length} failure(s)`)
 process.exit(failures.length === 0 ? 0 : 1)

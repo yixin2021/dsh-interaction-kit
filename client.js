@@ -1,7 +1,7 @@
 /**
  * DSH Interaction Kit — Client half.
  *
- * Four surfaces over one shared store, all built from the shipped UI
+ * Five surfaces over two shared stores, all built from the shipped UI
  * primitives so the plugin looks and behaves like the first-party chrome:
  *   - a dock row under the composer card holding the branch pill and, beside
  *     it as a peer control, the worktree option (`conversation.input.left`),
@@ -12,7 +12,9 @@
  *   - a permanent-delete row in each Session's "..." menu
  *     (`sidebar.workspaces.session.menu.item`),
  *   - a hidden cell in the Session row that opens that same menu on
- *     right-click (`sidebar.workspaces.session.row.action`).
+ *     right-click (`sidebar.workspaces.session.row.action`),
+ *   - a native `Menu` at the pointer for every file reference in the
+ *     conversation, opened by right-click (`shell.overlay`).
  *
  * Everything that touches the repository or the Session log goes through this
  * package's own Host route, so the page never runs git itself.
@@ -85,6 +87,14 @@ window.__ModuleLoader__.load({
       'delete.confirm': 'Delete permanently',
       'delete.cancel': 'Cancel',
       'delete.failed': 'Could not delete the Session.',
+      'file.open': 'Open with the default app',
+      'file.openFolder': 'Open in the file manager',
+      'file.reveal': 'Show in the file manager',
+      'file.copy': 'Copy path',
+      'file.missing': 'That path no longer exists.',
+      'file.noWorkspace': 'This Session has no working directory.',
+      'file.failed': 'Could not open that path.',
+      'file.copyFailed': 'Could not copy the path.',
       'close': 'Close',
       'error.generic': 'The Host rejected that request.',
     }
@@ -126,6 +136,14 @@ window.__ModuleLoader__.load({
       'delete.confirm': '永久删除',
       'delete.cancel': '取消',
       'delete.failed': '删除会话失败。',
+      'file.open': '用默认应用打开',
+      'file.openFolder': '在文件管理器中打开',
+      'file.reveal': '在文件管理器中显示',
+      'file.copy': '复制路径',
+      'file.missing': '该路径已不存在。',
+      'file.noWorkspace': '该会话没有工作目录。',
+      'file.failed': '打开该路径失败。',
+      'file.copyFailed': '复制路径失败。',
       'close': '关闭',
       'error.generic': 'Host 拒绝了这次请求。',
     }
@@ -160,6 +178,10 @@ window.__ModuleLoader__.load({
 .dsh-ik-form{display:flex;flex-direction:column;gap:10px}
 .dsh-ik-form-error{font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary);word-break:break-word}
 .dsh-ik-menu-status{color:var(--dsw-alias-label-tertiary);padding:8px;font-size:12px;line-height:18px;word-break:break-word}
+/* The file menu names the target path above its rows, in the menu's own caption
+   scale, so the heading reads as a header rather than as another row. */
+.dsh-ik-file-head{display:flex;align-items:center;min-width:0;padding:6px 8px 5px;margin-bottom:2px;border-bottom:.5px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:16px}
+.dsh-ik-file-head .dsh-ik-file-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-ik-hidden{display:none}
 `
 
@@ -231,6 +253,68 @@ window.__ModuleLoader__.load({
       // Untitled rows have no accessible-name discriminator, but the shipped
       // contract still puts the menu trigger first in the strip.
       return buttons[0] ?? null
+    }
+
+    /**
+     * How a file reference is recognised in the rendered conversation.
+     *
+     * The shipped renderers put three shapes on screen and none of them
+     * exposes a Slot: an `@`-mention chip in a user message carries
+     * `data-ref-chip="file"` (or `"folder"`), while a Markdown inline-code
+     * mention and a Markdown file link both render as a `button` with the
+     * `fileMention` class. Matching those contracts — never a position — is
+     * what keeps the plugin from swallowing the native menu on ordinary text.
+     */
+    const FILE_REFERENCE_SELECTOR = '[data-ref-chip="file"],[data-ref-chip="folder"],button[class*="fileMention"]'
+
+    /**
+     * The path one rendered file reference stands for.
+     *
+     * The two shapes state it in the same attribute for different reasons, so
+     * `title` is the only field both fill with the path itself:
+     *   - an `@`-mention chip puts the author's spelling there (`@src/a.ts`,
+     *     or `@"a b.ts"` when quoted), which the Host resolves against the
+     *     Session's directory exactly as the composer did;
+     *   - a Markdown mention or link puts the already-resolved path there.
+     *
+     * The visible text is deliberately never used: a Markdown link shows the
+     * author's label, not the path. A reference whose shape drops the title —
+     * the shipped link does that while an image preview is open — therefore
+     * answers nothing and keeps its native menu, rather than opening whatever
+     * the label happens to say.
+     *
+     * @param anchor - the element the pointer landed on.
+     * @returns the path text, or an empty string when the reference states none.
+     */
+    function referencePathOf(anchor) {
+      const title = anchor.getAttribute('title')
+      if (typeof title !== 'string') return ''
+      let candidate = title.trim()
+      if (candidate.startsWith('@')) candidate = candidate.slice(1)
+      if (candidate.length > 1 && candidate.startsWith('"') && candidate.endsWith('"')) {
+        candidate = candidate.slice(1, -1)
+      }
+      candidate = candidate.trim()
+      // A path may hold spaces but never a line break; a title that does was
+      // prose (an excerpt, a sentence), not a reference worth acting on.
+      return /[\r\n]/.test(candidate) ? '' : candidate
+    }
+
+    /**
+     * The Session a rendered reference belongs to.
+     *
+     * The Conversation body states it on itself (`data-conversation-session`),
+     * and a reference sits inside that subtree in both the transcript and the
+     * composer. A page-level match outside any Conversation — the Sidebar, a
+     * delivery card — therefore answers nothing and keeps its native menu.
+     *
+     * @param node - the matched reference element.
+     * @returns the Session id, or an empty string.
+     */
+    function sessionIdOf(node) {
+      const holder = node.closest('[data-conversation-session]')
+      const value = holder?.getAttribute('data-conversation-session')
+      return typeof value === 'string' && value.length > 0 ? value : ''
     }
 
     /**
@@ -487,12 +571,73 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The file-reference context menu: which reference the pointer landed on,
+     * and where the menu should open.
+     *
+     * @returns the store.
+     */
+    function createFileMenu() {
+      let state = {
+        open: false,
+        x: 0,
+        y: 0,
+        sessionId: '',
+        path: '',
+        kind: 'file',
+        error: '',
+        busy: false,
+      }
+      const listeners = new Set()
+
+      /** @returns the current state reference. */
+      const get = () => state
+
+      /** @param fn - change listener. @returns the unsubscribe function. */
+      const subscribe = (fn) => {
+        listeners.add(fn)
+        return () => {
+          listeners.delete(fn)
+        }
+      }
+
+      /** @param patch - fields to replace. */
+      const set = (patch) => {
+        state = { ...state, ...patch }
+        for (const fn of Array.from(listeners)) fn()
+      }
+
+      const close = () => {
+        if (state.open === false && state.error === '') return
+        set({ open: false, error: '', busy: false })
+      }
+
+      /**
+       * Open the menu over one reference.
+       * @param next - the reference and the pointer position.
+       */
+      const show = (next) => {
+        set({ open: true, x: next.x, y: next.y, sessionId: next.sessionId, path: next.path, kind: next.kind, error: '', busy: false })
+      }
+
+      /**
+       * The rectangle the shipped `Menu` positions against: a zero-size box at
+       * the pointer. A reference is inline text with no trigger element to
+       * anchor to, and zero width keeps the menu's own viewport clamping exact.
+       * @returns the anchor rectangle.
+       */
+      const anchorRect = () => ({ left: state.x, right: state.x, top: state.y, bottom: state.y, width: 0, height: 0 })
+
+      return { get, subscribe, set, close, show, anchorRect }
+    }
+
+    /**
      * Build the slot components over one store.
      * @param store - shared panel store.
      * @param primitives - the shipped primitive module, or undefined.
+     * @param fileMenu - the file-reference context-menu store.
      * @returns the components, keyed by the slot they fill.
      */
-    function createUi(store, primitives) {
+    function createUi(store, primitives, fileMenu) {
       const p = primitives ?? {}
 
       /**
@@ -563,6 +708,21 @@ window.__ModuleLoader__.load({
       /** @returns the trash glyph for the delete row. */
       function TrashIcon() {
         return canRender(p.IconTrashOutlineRegular) ? h(p.IconTrashOutlineRegular) : null
+      }
+
+      /** @returns the glyph for handing a path to another application. */
+      function OpenIcon() {
+        return canRender(p.IconRightUpOutlineRegular) ? h(p.IconRightUpOutlineRegular) : null
+      }
+
+      /** @returns the glyph for showing a path in the file manager. */
+      function RevealIcon() {
+        return canRender(p.IconFolderOpenOutlineRegular) ? h(p.IconFolderOpenOutlineRegular) : null
+      }
+
+      /** @returns the glyph for copying a path. */
+      function CopyIcon() {
+        return canRender(p.IconCopyOutlineRegular) ? h(p.IconCopyOutlineRegular) : null
       }
 
       /**
@@ -1008,6 +1168,204 @@ window.__ModuleLoader__.load({
         return h('span', { ref: marker, className: 'dsh-ik-hidden', 'data-interaction-kit-row': props.sessionId })
       }
 
+      /**
+       * The wording for a Host refusal.
+       *
+       * The Host answers in English for logs; the page speaks the operator's
+       * language, so the codes it can act on are translated here and anything
+       * else falls back to one general sentence.
+       *
+       * @param answer - the Host answer.
+       * @returns the message to show.
+       */
+      function fileFailureText(answer, t) {
+        if (answer.code === 'missing-path') return t('file.missing')
+        if (answer.code === 'no-workspace') return t('file.noWorkspace')
+        return t('file.failed')
+      }
+
+      /**
+       * Write text to the clipboard when the shipped helper is unavailable.
+       *
+       * Only the async Clipboard API is tried: the shipped `writeClipboard`
+       * already carries the `execCommand` fallback for a page that needs it,
+       * and a second hand-rolled copy path would be a second thing to keep
+       * right.
+       *
+       * @param text - the text to place on the clipboard.
+       * @returns whether the clipboard accepted it.
+       */
+      async function writeClipboardFallback(text) {
+        try {
+          if (navigator.clipboard?.writeText !== undefined) {
+            await navigator.clipboard.writeText(text)
+            return true
+          }
+        } catch {
+          /* Reported as a failed copy, never as a silent success. */
+        }
+        return false
+      }
+
+      /**
+       * The context menu for one file reference in the conversation.
+       *
+       * Nothing is registered per reference: the shipped renderers draw the
+       * `@`-mention chip and the Markdown mention themselves and neither
+       * exposes a Slot. The plugin therefore listens for `contextmenu` on the
+       * document and answers only when the pointer landed on one of those
+       * shapes inside a Conversation — anything else keeps the native menu, and
+       * without the shipped `Menu` nothing is intercepted at all.
+       */
+      function FileReferenceMenu(props) {
+        const t = props.t
+        const snapshot = React.useSyncExternalStore(fileMenu.subscribe, fileMenu.get)
+
+        React.useEffect(() => {
+          // A lane without the primitives could intercept the native menu and
+          // render nothing in its place, so it intercepts nothing.
+          if (!canRender(p.Menu)) return undefined
+
+          const onContextMenu = (event) => {
+            if (event.defaultPrevented === true) return
+            const target = event.target
+            if (target === null || typeof target !== 'object' || typeof target.closest !== 'function') return
+            const anchor = target.closest(FILE_REFERENCE_SELECTOR)
+            if (anchor === null) return
+            const sessionId = sessionIdOf(anchor)
+            const path = referencePathOf(anchor)
+            if (sessionId.length === 0 || path.length === 0) return
+            event.preventDefault()
+            event.stopPropagation()
+            fileMenu.show({
+              x: event.clientX,
+              y: event.clientY,
+              sessionId,
+              path,
+              kind: anchor.getAttribute('data-ref-chip') === 'folder' ? 'folder' : 'file',
+            })
+          }
+          // Capture phase: the chip is a button, and stopping the event here is
+          // what keeps the browser's own menu from also opening.
+          document.addEventListener('contextmenu', onContextMenu, true)
+          return () => document.removeEventListener('contextmenu', onContextMenu, true)
+        }, [])
+
+        // Without the shipped Menu there is nothing to render the rows into, and
+        // the effect above deliberately installs no listener either.
+        if (!canRender(p.Menu)) return null
+
+        const open = snapshot.open === true
+        const directory = snapshot.kind === 'folder'
+
+        /**
+         * Hand the reference to the desktop.
+         * @param mode - `open` for the default application, `reveal` for the file manager.
+         */
+        const act = async (mode) => {
+          const current = fileMenu.get()
+          if (current.busy === true) return
+          fileMenu.set({ busy: true, error: '' })
+          const answer = await callHost('open-path', current.sessionId, { path: current.path, mode })
+          if (answer.ok === true) {
+            fileMenu.close()
+            return
+          }
+          fileMenu.set({ busy: false, error: fileFailureText(answer, t) })
+        }
+
+        /** Copy the reference's path as the conversation spells it. */
+        const copy = async () => {
+          const current = fileMenu.get()
+          const write = typeof p.writeClipboard === 'function' ? p.writeClipboard : writeClipboardFallback
+          let copied = false
+          try {
+            copied = (await write(current.path)) === true
+          } catch {
+            copied = false
+          }
+          if (copied === true) {
+            fileMenu.close()
+            return
+          }
+          fileMenu.set({ error: t('file.copyFailed') })
+        }
+
+        const rows = [
+          {
+            id: 'open',
+            label: directory ? t('file.openFolder') : t('file.open'),
+            icon: h(OpenIcon),
+            onSelect: () => void act('open'),
+          },
+        ]
+        // Revealing a directory in its parent says nothing the row above does
+        // not already do, so only a file offers it.
+        if (!directory) {
+          rows.push({
+            id: 'reveal',
+            label: t('file.reveal'),
+            icon: h(RevealIcon),
+            onSelect: () => void act('reveal'),
+          })
+        }
+        rows.push({
+          id: 'copy',
+          label: t('file.copy'),
+          icon: h(CopyIcon),
+          separatorBefore: true,
+          onSelect: () => void copy(),
+        })
+
+        const head = h(
+          'div',
+          { className: 'dsh-ik-file-head' },
+          canRender(p.PathLabel)
+            ? h(p.PathLabel, { path: snapshot.path, className: 'dsh-ik-file-path' })
+            : h('span', { className: 'dsh-ik-file-path', title: snapshot.path }, snapshot.path),
+        )
+
+        return h(
+          React.Fragment,
+          null,
+          h(StyleTag),
+          h(p.Menu, {
+            open,
+            onClose: () => fileMenu.close(),
+            anchor: null,
+            getAnchorRect: () => fileMenu.anchorRect(),
+            portal: true,
+            side: 'bottom',
+            align: 'start',
+            autoFocus: true,
+            listClassName: 'dsh-ik-menu',
+            children: open
+              ? h(
+                  React.Fragment,
+                  null,
+                  head,
+                  snapshot.error.length > 0 ? h('div', { className: 'dsh-ik-menu-status', role: 'alert' }, snapshot.error) : null,
+                  rows.map((row) =>
+                    canRender(p.MenuItemButton)
+                      ? h(
+                          p.MenuItemButton,
+                          {
+                            key: row.id,
+                            icon: row.icon,
+                            disabled: snapshot.busy,
+                            separatorBefore: row.separatorBefore === true,
+                            onSelect: row.onSelect,
+                          },
+                          row.label,
+                        )
+                      : h('button', { key: row.id, type: 'button', role: 'menuitem', disabled: snapshot.busy, onClick: row.onSelect }, row.icon, h('span', null, row.label)),
+                  ),
+                )
+              : null,
+          }),
+        )
+      }
+
       /** The acknowledgement required before a permanent delete. */
       function DeleteConfirmation(props) {
         const t = props.t
@@ -1061,7 +1419,7 @@ window.__ModuleLoader__.load({
         })
       }
 
-      return { BranchDock, GitOverlay, PermanentDeleteMenuItem, SessionRowContextAction, DeleteConfirmation }
+      return { BranchDock, GitOverlay, PermanentDeleteMenuItem, SessionRowContextAction, DeleteConfirmation, FileReferenceMenu }
     }
 
     return {
@@ -1071,7 +1429,12 @@ window.__ModuleLoader__.load({
 
         const primitives = loadPrimitives()
         const store = createStore()
-        const { BranchDock, GitOverlay, PermanentDeleteMenuItem, SessionRowContextAction, DeleteConfirmation } = createUi(store, primitives)
+        const fileMenu = createFileMenu()
+        const { BranchDock, GitOverlay, PermanentDeleteMenuItem, SessionRowContextAction, DeleteConfirmation, FileReferenceMenu } = createUi(
+          store,
+          primitives,
+          fileMenu,
+        )
 
         // `conversation.input.left` is the seat immediately after the composer's
         // own mode group, so the chip and the checkbox sit beside the mode
@@ -1100,6 +1463,21 @@ window.__ModuleLoader__.load({
               locale: NS,
             },
             GitOverlay,
+          ),
+        )
+
+        // The file-reference menu rides the overlay too: it portals to the body
+        // and has to outlive the click that opened it, so it cannot live inside
+        // the transcript node whose text it was opened on.
+        ctx.slots.inject('shell.overlay', () =>
+          ctx.slots.register(
+            {
+              name: 'shell.overlay',
+              id: 'interaction-kit-file-menu',
+              order: 42,
+              locale: NS,
+            },
+            FileReferenceMenu,
           ),
         )
 

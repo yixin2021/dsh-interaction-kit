@@ -1,7 +1,7 @@
 {
   "name": "dsh-interaction-kit",
-  "version": "0.1.0",
-  "description": "Interaction and convenience upgrades for the DSH Web UI: right-click a Session for its full menu (with permanent delete), a Git branch chip under the composer with switching, and an opt-in worktree mode that creates a worktree on the first write and then shows its name instead of the checkbox.",
+  "version": "0.2.0",
+  "description": "Interaction and convenience upgrades for the DSH Web UI: right-click a Session for its full menu (with permanent delete), a Git branch chip under the composer with switching, an opt-in worktree mode that creates a worktree on the first write, and a right-click menu on every file reference in the conversation.",
   "keywords": [
     "deepseek-harness",
     "dsh",

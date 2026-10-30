@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Interaction and convenience upgrades for the DSH Web UI. One plugin, three surfaces, all built from
+Interaction and convenience upgrades for the DSH Web UI. One plugin, four surfaces, all built from
 the shipped UI primitives so nothing looks bolted on.
 
 - **Right-click a Session** — the same menu the `⋯` button opens (fork, rename, archive, pin,
@@ -13,6 +13,9 @@ the shipped UI primitives so nothing looks bolted on.
   worktree is created and the Session moves into it, so parallel work stops colliding in one
   checkout. Once the conversation has started the option becomes the worktree's name, and disappears
   when the Session never opted in.
+- **Right-click a file reference** — every `@`-mention, inline-code mention and Markdown file link in
+  the conversation opens a native menu: open in the default application, show in the file manager,
+  copy path.
 
 ## Features
 
@@ -91,6 +94,28 @@ main checkout), and a permanently disabled checkbox would only advertise a state
 The Host refuses that transition with `worktree-locked` and reports `started` and `worktreeLocked` in
 `status`.
 
+### File reference right-click menu
+
+Right-click any file the conversation refers to — an `@`-mention chip in a message you sent, an
+inline-code mention in a reply, or a Markdown file link — and the pointer gets a native menu:
+**open** in the default application, **show** in the file manager, **copy path**. A directory swaps
+the reveal row for "open in the file manager", since revealing it in its parent says nothing the
+first row does not already do.
+
+Unlike the Session row, there is no trigger to drive here: the mention chip and the Markdown link are
+drawn by the shipped renderers and expose no Slot, so the plugin cannot place a cell inside them. It
+listens for `contextmenu` on the document instead and answers only when the pointer landed on one of
+the three documented shapes — `[data-ref-chip]` on an `@`-mention, `button[class*="fileMention"]` on a
+mention or link — **inside** a `[data-conversation-session]` subtree. Anything else keeps the native
+menu, a reference that states no path (a Markdown link showing an image preview drops its `title`)
+keeps the native menu, and if the shipped `Menu` is unavailable nothing is intercepted at all: the
+plugin will not swallow a menu it cannot replace.
+
+The path is taken from the reference's `title`, never from its visible label — a Markdown link shows
+the author's wording, not the path. The Host resolves a Workspace-relative path against the Session's
+own directory, refuses a target that does not exist (`missing-path`), and hands the result to the
+platform opener as a single argument, so no path is ever concatenated into a shell command line.
+
 ## Install
 
 Published on npm as [`dsh-interaction-kit`](https://www.npmjs.com/package/dsh-interaction-kit):
@@ -164,7 +189,7 @@ identical to what everyone else gets. Switching between them is just `rm` + `add
 | Half | File | Responsibility |
 | --- | --- | --- |
 | Host | `index.js` | One authenticated route, `POST /api/interaction-kit`, plus a `tools/pre-execute` hook for auto-worktree. All `git` and filesystem work happens here. |
-| Client | `client.js` | Five slot registrations: composer tool row, branch menu overlay, Session menu row, Session row right-click, delete dialog. |
+| Client | `client.js` | Six slot registrations: composer tool row, branch menu overlay, file-reference menu overlay, Session menu row, Session row right-click, delete dialog. |
 
 The page never runs `git` itself. The Client half only sends `{action, sessionId, …}` and renders
 the answer, so a repository path or a branch name from the page is validated on the Host
@@ -176,14 +201,23 @@ State lives in `$DSH_HOME/storages/interaction-kit-toolkit.json`:
 { "version": 1, "worktreeMode": {}, "worktrees": {} }
 ```
 
-Writes are queued and atomic, so two Sessions toggling at once cannot corrupt it.
+Writes are queued and atomic, so two Sessions toggling at once cannot corrupt it. Nothing about a
+file-reference menu is stored: the reference states its own path, and the Host answers the request
+without touching that file.
+
+| Action | What it does |
+| --- | --- |
+| `status`, `switch`, `create-branch` | read the checkout, change branches |
+| `set-worktree-mode`, `create-worktree`, `restore-cwd` | the worktree option |
+| `delete-session` | permanent delete |
+| `open-path` | `{path, mode: "open" \| "reveal"}` → hand one path to the desktop |
 
 ### Slots
 
 | Slot | Purpose |
 | --- | --- |
 | `conversation.input.left` | Branch chip + worktree option, beside the mode selector |
-| `shell.overlay` | Branch menu, create-branch dialog, delete confirmation |
+| `shell.overlay` | Branch menu, file-reference menu, create-branch dialog, delete confirmation |
 | `sidebar.workspaces.session.menu.item` | Permanent delete row |
 | `sidebar.workspaces.session.row.action` | Right-click → menu |
 
@@ -197,8 +231,10 @@ node verify-host.mjs <sessionId>   # drives the Host route against a sandboxed $
 
 `verify-layout.mjs` renders the slot components against a stub React and asserts the resulting tree
 — which primitive was used, which classes, which locale strings, and the safety properties (no
-archive click, no viewport-wide listener). The harnesses are development-only: `files` in
-`package.json` keeps them out of the published tarball.
+archive click, no contextmenu listener when the target cannot be identified, no interception without
+the shipped `Menu`). `verify-host.mjs` drives the route against a sandboxed `$DSH_HOME` and asserts
+the `open-path` refusals plus the per-platform opener matrix without launching anything. The harnesses
+are development-only: `files` in `package.json` keeps them out of the published tarball.
 
 ### Releasing
 

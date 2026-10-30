@@ -4,7 +4,8 @@
  * Owns one authenticated JSON route (`POST /api/interaction-kit`) that the Client
  * half calls for everything the page cannot do itself: repository status,
  * branch switching and creation, Git worktree creation, the per-Session
- * worktree switch, and permanent Session deletion.
+ * worktree switch, permanent Session deletion, and handing a referenced path to
+ * the desktop that serves this Host.
  *
  * It also watches each Agent's file-writing tool calls so an enabled worktree
  * exists — and is the current checkout — before a write lands.
@@ -22,6 +23,9 @@ const ROUTE = '/api/interaction-kit'
 
 /** Wall-clock ceiling of one git invocation. */
 const GIT_TIMEOUT_MS = 20_000
+
+/** Wall-clock ceiling of one desktop opener. */
+const OPEN_TIMEOUT_MS = 10_000
 
 /** A name this plugin is willing to hand to git. */
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
@@ -93,6 +97,159 @@ function git(cwd, args) {
       },
     )
   })
+}
+
+/**
+ * Encode one Windows path as the target Explorer can receive intact.
+ *
+ * Built segment by segment rather than through `pathToFileURL`, so the answer
+ * does not depend on which platform happens to be encoding it: a Windows host
+ * is the only one that runs this, but the mapping stays assertable anywhere.
+ *
+ * Explorer parses its own command line and splits fields at commas and equals
+ * signs, so both are escaped. Non-ASCII is kept literal: Explorer rejects
+ * percent-encoded non-ASCII in a file URI and opens the user's Documents folder
+ * instead, while it resolves the literal characters.
+ *
+ * @param windowsPath - an absolute Windows path.
+ * @returns the target for an open, or the object of a `/select,` reveal.
+ */
+export function explorerTarget(windowsPath) {
+  const normalized = windowsPath.replace(/\//gu, '\\')
+  const unc = normalized.startsWith('\\\\')
+  const segments = (unc ? normalized.slice(2) : normalized).split('\\').filter((segment) => segment.length > 0)
+  const encoded = segments
+    .map((segment) =>
+      // The drive letter keeps its colon: `file:///C:/…` names a drive, while
+      // `file:///C%3A/…` does not.
+      /^[A-Za-z]:$/u.test(segment)
+        ? segment
+        : encodeURIComponent(segment).replace(/(?:%[89A-F][0-9A-F])+/giu, (escaped) => decodeURIComponent(escaped)),
+    )
+    .join('/')
+  return `file://${unc ? '' : '/'}${encoded}`.replaceAll(',', '%2C').replaceAll('=', '%3D')
+}
+
+/**
+ * Run one desktop command and always resolve.
+ *
+ * The opener is a GUI launcher, never a shell string: `open -R` and
+ * `xdg-open` receive the path as a single argv entry, and Windows `explorer`
+ * receives the one argument its own command-line parser expects. Nothing here
+ * builds a command line by concatenation except that Explorer argument, whose
+ * escaping is handled below.
+ *
+ * @param command - executable name.
+ * @param args - arguments after the executable.
+ * @returns the exit outcome plus both streams.
+ */
+function desktop(command, args) {
+  return new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      { timeout: OPEN_TIMEOUT_MS, windowsHide: true },
+      (error, stdout, stderr) => {
+        resolve({
+          ok: error === null || error === undefined,
+          // `code` is the exit status for a signalled failure and a string for
+          // a spawn failure; only the numeric form is useful to a caller.
+          code: typeof error?.code === 'number' ? error.code : undefined,
+          stdout: String(stdout ?? ''),
+          stderr: String(stderr ?? ''),
+        })
+      },
+    )
+  })
+}
+
+/**
+ * The desktop command one path and mode resolve to.
+ *
+ * Pure and platform-parameterised so the whole matrix can be asserted without
+ * launching anything; `openOnDesktop` is only the executor.
+ *
+ * @param target - absolute path that already exists.
+ * @param directory - whether that path is a directory.
+ * @param mode - `open` for the default application, `reveal` for the file manager.
+ * @param platform - the Host platform.
+ * @returns the executable and its arguments, or undefined for a Host with no opener.
+ */
+export function desktopInvocation(target, directory, mode, platform) {
+  if (platform === 'darwin') {
+    // `-R` selects the item in its parent instead of launching it, which is
+    // the only difference between revealing a file and opening it.
+    return { command: 'open', args: mode === 'reveal' ? ['-R', target] : [target] }
+  }
+  if (platform === 'win32') {
+    if (mode === 'reveal') return { command: 'explorer', args: [`/select,${explorerTarget(target)}`] }
+    // `start` needs an empty title argument before the target, or it treats a
+    // quoted path as the window title.
+    return { command: 'cmd', args: ['/c', 'start', '', target] }
+  }
+  if (platform === 'linux') {
+    // xdg-open has no "select this entry" verb; the containing directory is
+    // the closest a file manager can get without a per-desktop API.
+    return { command: 'xdg-open', args: [mode === 'reveal' && !directory ? path.dirname(target) : target] }
+  }
+  return undefined
+}
+
+/**
+ * Hand one path to the desktop that serves this Host.
+ * @param target - absolute path that already exists.
+ * @param directory - whether that path is a directory.
+ * @param mode - `open` for the default application, `reveal` for the file manager.
+ * @returns the opener's outcome.
+ */
+async function openOnDesktop(target, directory, mode) {
+  const invocation = desktopInvocation(target, directory, mode, process.platform)
+  if (invocation === undefined) {
+    return { ok: false, stdout: '', stderr: 'This Host has no desktop opener.' }
+  }
+  const result = await desktop(invocation.command, invocation.args)
+  if (process.platform !== 'win32' || invocation.command !== 'explorer') return result
+  // Explorer is a singleton that reports 1 even when it succeeded; a non-numeric
+  // `code` is the spawn failure that is worth reporting.
+  return result.ok ? result : { ...result, ok: result.code === 1 }
+}
+
+/**
+ * Reveal or open one path a conversation referred to.
+ *
+ * The reference states the path the way the author wrote it: a Workspace-
+ * relative one is resolved against the Session's own directory here, so the
+ * page never has to know that directory. Nothing is opened unless the path
+ * exists, which also turns a stale reference into a message instead of an
+ * unhelpful launch.
+ *
+ * @param ctx - Host context.
+ * @param sessionId - Session whose conversation carried the reference.
+ * @param body - the request fields: `path` and `mode`.
+ * @returns the opened path, or a typed failure.
+ */
+async function openReferencedPath(ctx, sessionId, body) {
+  const mode = body['mode'] === 'reveal' ? 'reveal' : 'open'
+  const raw = typeof body['path'] === 'string' ? body['path'].trim() : ''
+  if (raw.length === 0 || raw.length > 4096 || /[\u0000-\u001f\u007f]/.test(raw)) {
+    return { ok: false, code: 'bad-path', message: 'A usable path is required.' }
+  }
+  const cwd = resolveCwd(ctx, sessionId)
+  if (cwd === undefined) {
+    return { ok: false, code: 'no-workspace', message: 'This Session has no working directory.' }
+  }
+  const target = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(cwd, raw)
+  let stats
+  try {
+    stats = await fs.stat(target)
+  } catch {
+    return { ok: false, code: 'missing-path', path: target, message: `Nothing exists at ${target}.` }
+  }
+  const result = await openOnDesktop(target, stats.isDirectory(), mode)
+  if (result.ok !== true) {
+    return { ok: false, code: 'open-failed', path: target, message: textOf(result, 'The desktop refused that path.') }
+  }
+  return { ok: true, path: target, directory: stats.isDirectory() }
 }
 
 /** Serialize state mutations so two presses cannot interleave writes. */
@@ -556,6 +713,7 @@ async function dispatch(ctx, body) {
   }
   if (action === 'restore-cwd') return restoreOriginalCwd(ctx, sessionId)
   if (action === 'delete-session') return deleteSessionPermanently(ctx, sessionId)
+  if (action === 'open-path') return openReferencedPath(ctx, sessionId, body)
   return { ok: false, code: 'unknown-action', message: `Unknown action "${action}".` }
 }
 

@@ -1,6 +1,6 @@
 # dsh-interaction-kit
 
-DSH Web 交互增强套件：一个插件，三处改进，全部用原生 UI 组件实现，不做生硬的样式改造。
+DSH Web 交互增强套件：一个插件，四处改进，全部用原生 UI 组件实现，不做生硬的样式改造。
 
 - **右键会话** —— 直接弹出与 `⋯` 按钮完全相同的菜单（分叉、重命名、归档、置顶、永久删除……），
   不必再去瞄准那三个点。
@@ -8,6 +8,8 @@ DSH Web 交互增强套件：一个插件，三处改进，全部用原生 UI �
   吸顶搜索框、吸顶分组标题、分支列表。
 - **工作树选项** —— 按会话开启，先勾选再写代码，首次写文件时自动创建 worktree 并把会话迁入，并行开发
   不再挤在同一个检出里。对话开始后选项变成 worktree 名称；没开启则整项不再显示。
+- **右键文件引用** —— 对话里的 `@` 提及、行内代码提及、Markdown 文件链接都可以右键：用默认应用打开、
+  在文件管理器中定位、复制路径。
 
 ## 功能
 
@@ -71,6 +73,23 @@ DSH Web 交互增强套件：一个插件，三处改进，全部用原生 UI �
 第一条消息之后再取消并不能撤销任何事（已经跑在 worktree 里的写入会留在那里，而之后的写入会重开主
 检出），而一个永久禁用的勾选框只会展示一个谁都无法改变的状态。Host 用 `worktree-locked` 拒绝这个
 转换，并在 `status` 里回报 `started` 与 `worktreeLocked`。
+
+### 文件引用右键菜单
+
+右键对话里提到的任何文件——自己发出的 `@` 提及胶囊、回复里的行内代码提及、Markdown 文件链接——指针处
+都会弹出原生菜单：**打开**（默认应用）、**在文件管理器中显示**、**复制路径**。目录会把「显示」换成
+「在文件管理器中打开」，因为「在父目录里定位它」并没有比第一行多说任何东西。
+
+和会话行不同，这里没有触发器可驱动：提及胶囊和 Markdown 链接由原生渲染器画出，没有暴露 Slot，插件无法
+在其中塞一个单元格。于是改为在 document 上监听 `contextmenu`，只在指针落在那三种有据可依的形态上、**并且**
+位于 `[data-conversation-session]` 子树内时才响应——`@` 提及的 `[data-ref-chip]`、提及与链接的
+`button[class*="fileMention"]`。其余情况一律交还原生菜单；说明不了路径的引用（Markdown 链接在展示图片
+预览时会丢掉 `title`）也交还原生菜单；原生 `Menu` 不可用时完全不拦截——插件不会吞掉一个自己画不出来的
+菜单。
+
+路径取自引用的 `title`，**不取**可见文字——Markdown 链接显示的是作者写的措辞，不是路径。Host 用会话自己的
+目录解析相对路径，目标不存在就返回 `missing-path`，最后把结果作为**单个参数**交给平台打开器，任何路径都
+不会被拼进 shell 命令行。
 
 ## 安装
 
@@ -139,7 +158,7 @@ dsh plugin --profile web add dsh-interaction-kit@0.1.1
 | 半 | 文件 | 职责 |
 | --- | --- | --- |
 | Host | `index.js` | 一条鉴权路由 `POST /api/interaction-kit`，外加用于自动工作树的 `tools/pre-execute` 钩子。所有 `git` 与文件系统操作都在这里。 |
-| Client | `client.js` | 五处 Slot 注册：输入区 dock、分支菜单浮层、会话菜单行、会话行右键、删除确认框。 |
+| Client | `client.js` | 六处 Slot 注册：输入区 dock、分支菜单浮层、文件引用菜单浮层、会话菜单行、会话行右键、删除确认框。 |
 
 页面本身从不执行 `git`。Client 半只发 `{action, sessionId, …}` 并渲染结果，因此来自页面的仓库路径和
 分支名都会先在 Host 上用 `NAME_PATTERN` 校验，才会进入命令行。
@@ -150,14 +169,22 @@ dsh plugin --profile web add dsh-interaction-kit@0.1.1
 { "version": 1, "worktreeMode": {}, "worktrees": {} }
 ```
 
-写入串行化并原子替换，两个会话同时切换也不会写坏。
+写入串行化并原子替换，两个会话同时切换也不会写坏。文件引用菜单不存任何状态：引用自带路径，Host 答完请求
+就结束，不碰那个文件。
+
+| 动作 | 作用 |
+| --- | --- |
+| `status`、`switch`、`create-branch` | 读取检出、切换分支 |
+| `set-worktree-mode`、`create-worktree`、`restore-cwd` | 工作树选项 |
+| `delete-session` | 永久删除 |
+| `open-path` | `{path, mode: "open" \| "reveal"}` → 把单个路径交给桌面 |
 
 ### Slot 一览
 
 | Slot | 用途 |
 | --- | --- |
 | `conversation.input.left` | 分支胶囊 + 工作树选项，紧挨模式选择 |
-| `shell.overlay` | 分支菜单、新建分支对话框、删除确认 |
+| `shell.overlay` | 分支菜单、文件引用菜单、新建分支对话框、删除确认 |
 | `sidebar.workspaces.session.menu.item` | 永久删除行 |
 | `sidebar.workspaces.session.row.action` | 右键 → 菜单 |
 
@@ -170,7 +197,9 @@ node verify-host.mjs <sessionId>   # 在沙箱 $DSH_HOME 中驱动 Host 路由
 ```
 
 `verify-layout.mjs` 用桩 React 渲染各 Slot 组件并断言产出的树——用了哪个原生组件、哪些类名、
-哪些文案，以及关键安全性质（绝不误触归档、不在整页挂监听）。校验脚本仅用于开发：`package.json` 的 `files`
+哪些文案，以及关键安全性质（绝不误触归档、识别不到目标就不挂监听、没有原生 `Menu` 就完全不拦截）。
+`verify-host.mjs` 在沙箱 `$DSH_HOME` 中驱动路由，断言 `open-path` 的各种拒绝情形和各平台打开器矩阵，
+全程不启动任何程序。校验脚本仅用于开发：`package.json` 的 `files`
 字段把它们排除在发布的 tarball 之外。
 
 ### 发布新版本

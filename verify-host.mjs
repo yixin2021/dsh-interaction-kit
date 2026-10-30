@@ -115,6 +115,23 @@ async function call(action, extra) {
   return { status: response.status, body: await response.json() }
 }
 
+/**
+ * Issue one request for an arbitrary Session.
+ * @param action - Host action.
+ * @param id - Session id to claim.
+ * @param extra - extra body fields.
+ * @returns the decoded answer.
+ */
+async function call2(action, id, extra) {
+  const request = new Request('http://127.0.0.1/api/interaction-kit', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action, sessionId: id, ...(extra ?? {}) }),
+  })
+  const response = await registered.fetch.fetch(request)
+  return { status: response.status, body: await response.json() }
+}
+
 /** Print one answer compactly. */
 function show(label, answer) {
   const body = answer.body
@@ -222,6 +239,91 @@ session.started = false
 show('worktree-mode off after starting again', await call('set-worktree-mode', { enabled: false }))
 
 show('delete-session (no such log)', await call('delete-session'))
+
+// ------------------------------------------------ file references --
+// The launch itself is not exercised: it would put a window on the user's
+// desktop. Everything the route decides before launching is, and the command
+// matrix is asserted directly against the pure resolver.
+console.log('\n--- file references ---')
+const refusals = [
+  ['an empty path', { path: '', mode: 'open' }, 'bad-path'],
+  ['a control character', { path: 'src/\u0000.ts', mode: 'open' }, 'bad-path'],
+  ['a missing target', { path: 'definitely-no-such-file-xyz.ts', mode: 'open' }, 'missing-path'],
+  ['a missing absolute target', { path: '/definitely/no/such/file-xyz.ts', mode: 'reveal' }, 'missing-path'],
+]
+for (const [label, extra, expected] of refusals) {
+  const answer = await call('open-path', extra)
+  console.log(`${answer.body.code === expected ? 'ok  ' : 'FAIL'} ${label} is refused with "${expected}" (got ${answer.body.code})`)
+  if (answer.body.code !== expected) process.exitCode = 1
+  if (answer.body.ok !== false) {
+    console.error(`FAIL ${label} did not report failure`)
+    process.exitCode = 1
+  }
+}
+
+// A reference is resolved against the Session's own directory, never the Host's
+// process directory, so a relative path cannot escape to another checkout.
+const relative = await call('open-path', { path: 'no-such-file-in-workspace.ts', mode: 'open' })
+const resolved = String(relative.body.path ?? '')
+const insideSession = path.isAbsolute(resolved) && resolved.endsWith(path.sep + 'no-such-file-in-workspace.ts')
+console.log(`${insideSession ? 'ok  ' : 'FAIL'} the reference is resolved to an absolute path inside a Session (${resolved})`)
+if (!insideSession) process.exitCode = 1
+
+// A Session the Host cannot place resolves against the Host's own fallback
+// directory rather than the process directory of whoever asked.
+const orphan = await call2('open-path', 'not-a-session-at-all', { path: 'no-such-orphan-file.ts', mode: 'open' })
+const orphanPath = String(orphan.body.path ?? '')
+console.log(`${orphanPath.startsWith(process.cwd()) ? 'ok  ' : 'FAIL'} an unplaceable Session still resolves against a known directory (${orphanPath})`)
+if (!orphanPath.startsWith(process.cwd())) process.exitCode = 1
+if (orphan.body.code !== 'missing-path') {
+  console.error('FAIL the orphan reference did not report its missing target:', orphan.body.code)
+  process.exitCode = 1
+}
+
+const { desktopInvocation, explorerTarget } = await import('./index.js')
+const mac = desktopInvocation('/work/a b.ts', false, 'reveal', 'darwin')
+console.log(`ok   macOS reveals with a single -R argument (${JSON.stringify(mac)})`)
+if (mac?.command !== 'open' || mac.args.length !== 2 || mac.args[0] !== '-R' || mac.args[1] !== '/work/a b.ts') process.exitCode = 1
+const macOpen = desktopInvocation('/work/a b.ts', false, 'open', 'darwin')
+if (macOpen?.command !== 'open' || macOpen.args.length !== 1) {
+  console.error('FAIL macOS open passed more than the path')
+  process.exitCode = 1
+}
+const linux = desktopInvocation('/work/src/a.ts', false, 'reveal', 'linux')
+console.log(`${linux?.args[0] === '/work/src' ? 'ok  ' : 'FAIL'} Linux reveals the containing directory (${linux?.args[0]})`)
+if (linux?.args[0] !== '/work/src') process.exitCode = 1
+const linuxDir = desktopInvocation('/work/src', true, 'reveal', 'linux')
+if (linuxDir?.args[0] !== '/work/src') {
+  console.error('FAIL Linux revealed the parent of a directory')
+  process.exitCode = 1
+}
+const windows = desktopInvocation('C:\\work\\a,b=c.ts', false, 'reveal', 'win32')
+console.log(`${windows?.args[0].startsWith('/select,') ? 'ok  ' : 'FAIL'} Windows selects the file (${windows?.args[0]})`)
+if (!String(windows?.args[0]).startsWith('/select,')) process.exitCode = 1
+if (windows.args[0].includes(',', 8) || windows.args[0].includes('=')) {
+  console.error('FAIL the Explorer separators were not escaped:', windows.args[0])
+  process.exitCode = 1
+}
+const windowsOpen = desktopInvocation('C:\\work\\a.ts', false, 'open', 'win32')
+if (windowsOpen?.command !== 'cmd' || windowsOpen.args.join(' ') !== '/c start  C:\\work\\a.ts') {
+  console.error('FAIL the Windows open keeps the empty title argument:', JSON.stringify(windowsOpen))
+  process.exitCode = 1
+}
+if (desktopInvocation('/work/a.ts', false, 'open', 'aix') !== undefined) {
+  console.error('FAIL a Host with no opener resolved to a command')
+  process.exitCode = 1
+}
+console.log('ok   a Host with no opener resolves to nothing')
+// A path with a separator in it must survive as one argument, never be split.
+for (const [windowsPath, expected] of [
+  ['C:\\work\\a b.ts', 'file:///C:/work/a%20b.ts'],
+  ['C:\\work\\a,b=c.ts', 'file:///C:/work/a%2Cb%3Dc.ts'],
+  ['C:\\工作\\文件.ts', 'file:///C:/工作/文件.ts'],
+]) {
+  const actual = explorerTarget(windowsPath)
+  console.log(`${actual === expected ? 'ok  ' : 'FAIL'} Explorer receives ${expected} (got ${actual})`)
+  if (actual !== expected) process.exitCode = 1
+}
 
 for (const entry of registered.cleanups) {
   if (typeof entry.cleanup === 'function') entry.cleanup()

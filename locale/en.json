@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DSH Interaction Kit",
-    "description": "Right-click a Session for its full menu (permanent delete included), see and switch the current Git branch under the composer, and opt into a worktree before the first message — once the conversation starts, its name is shown instead."
+    "description": "Right-click a Session for its full menu (permanent delete included), see and switch the current Git branch under the composer, opt into a worktree before the first message — and right-click any file the conversation refers to for open, reveal and copy."
   }
 }
